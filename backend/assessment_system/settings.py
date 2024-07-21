@@ -50,11 +50,9 @@ INSTALLED_APPS = [
     'user',
     'assessment',
     'results',
-    'corsheaders',
 ]
 
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     'corsheaders.middleware.CorsMiddleware',
@@ -152,3 +150,5 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     'content-type',
 ]
 
+GOOGLE_GENERATIVE_AI_API_KEY = os.getenv('GOOGLE_API_KEY')
+GOOGLE_GENERATIVE_AI_MODEL = 'gemini-1.5-flash-latest'
