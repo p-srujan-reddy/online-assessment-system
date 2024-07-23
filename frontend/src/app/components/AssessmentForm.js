@@ -5,23 +5,24 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { generateAssessment } from '../../../lib/api';
-import LoadingSpinner from './LoadingSpinner'; // Assuming you have a LoadingSpinner component
+import LoadingSpinner from './LoadingSpinner';
+import { useAssessment } from '../context/AssessmentContext';
 
-export default function AssessmentForm({ onQuestionsGenerated }) {
+export default function AssessmentForm() {
   const [topic, setTopic] = useState('');
   const [assessmentType, setAssessmentType] = useState('mcq');
   const [questionCount, setQuestionCount] = useState(5);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
   const router = useRouter();
+  const { setQuestions, setAssessmentType: setContextAssessmentType } = useAssessment();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
       const data = await generateAssessment({ topic, assessmentType, questionCount });
-      setResult(data);
-      onQuestionsGenerated(data); // Pass generated questions to parent component
+      setQuestions(data.questions);
+      setContextAssessmentType(assessmentType); // Store assessment type in context
       router.push('/questions');
     } catch (error) {
       console.error('Error:', error);
@@ -73,12 +74,6 @@ export default function AssessmentForm({ onQuestionsGenerated }) {
           {loading ? <LoadingSpinner /> : 'Generate Assessment'}
         </button>
       </form>
-      {result && (
-        <div className="mt-4 p-4 bg-gray-100 rounded-md">
-          <h3 className="text-lg font-semibold mb-2">Generated Assessment:</h3>
-          <pre className="whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre>
-        </div>
-      )}
     </div>
   );
 }

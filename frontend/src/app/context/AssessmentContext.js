@@ -8,9 +8,10 @@ const AssessmentContext = createContext();
 
 export function AssessmentProvider({ children }) {
   const [questions, setQuestions] = useState([]);
+  const [assessmentType, setAssessmentType] = useState('mcq');
 
   return (
-    <AssessmentContext.Provider value={{ questions, setQuestions }}>
+    <AssessmentContext.Provider value={{ questions, setQuestions, assessmentType, setAssessmentType }}>
       {children}
     </AssessmentContext.Provider>
   );

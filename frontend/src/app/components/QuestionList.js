@@ -2,39 +2,60 @@
 
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useAssessment } from '../context/AssessmentContext';
-import { useRouter } from 'next/navigation';
 
 const QuestionList = () => {
-  const { questions } = useAssessment();
-  const [submitted, setSubmitted] = useState(false);
-  const router = useRouter();
+  const { questions, assessmentType } = useAssessment();
+  const [selectedAnswers, setSelectedAnswers] = useState({});
 
-  useEffect(() => {
-    if (submitted) {
-      router.push('/results');
-    }
-  }, [submitted, router]);
-
-  const handleSubmit = () => {
-    setSubmitted(true);
+  const handleOptionChange = (questionIndex, optionIndex) => {
+    setSelectedAnswers({
+      ...selectedAnswers,
+      [questionIndex]: optionIndex,
+    });
   };
 
   return (
     <div>
       <h2>Generated Questions</h2>
-      <ul>
-        {questions.map((question, index) => (
-          <li key={index}>{question}</li>
-        ))}
-      </ul>
-      <button
-        onClick={handleSubmit}
-        className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-      >
-        Submit Answers
-      </button>
+      {assessmentType === 'mcq' ? (
+        <ul>
+          {questions.map((question, questionIndex) => (
+            <li key={questionIndex}>
+              <div>
+                <p>{question.text}</p>
+                <form>
+                  {question.options.map((option, optionIndex) => (
+                    <div key={optionIndex}>
+                      <label>
+                        <input
+                          type="radio"
+                          name={`question-${questionIndex}`}
+                          value={option}
+                          checked={selectedAnswers[questionIndex] === optionIndex}
+                          onChange={() => handleOptionChange(questionIndex, optionIndex)}
+                        />
+                        {option}
+                      </label>
+                    </div>
+                  ))}
+                </form>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <ul>
+          {questions.map((question, index) => (
+            <li key={index}>
+              <div>
+                <p>{question.text}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 };
