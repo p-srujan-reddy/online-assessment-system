@@ -21,7 +21,11 @@ class GenerateAssessmentView(APIView):
             return Response({"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST)
 
         # Create the prompt template
-        prompt = f"Generate {question_count} {assessment_type} questions about {topic}. For each question, provide the correct answer and, if it's a multiple-choice question, provide 3 incorrect options."
+        prompt = (
+            f"Generate {question_count} {assessment_type} questions about {topic} in JSON format. "
+            f"Each question should have a 'text' field for the question, an 'options' field for the answer options, "
+            f"and a 'correct_answer' field for the correct answer. If it's a multiple-choice question, 'options' should include the correct answer and 3 incorrect options."
+        )
 
         # Prepare the payload for the API request
         payload = {
@@ -62,39 +66,33 @@ class GenerateAssessmentView(APIView):
             return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 def parse_generated_text(generated_text):
-    questions = []
-    lines = generated_text.split('\n')
-    
-    current_question = {}
-    correct_answer_started = False
-    incorrect_options_started = False
+    import json
+    try:
+        # Remove code block markers if present
+        if generated_text.startswith("```") and generated_text.endswith("```"):
+            generated_text = generated_text.strip("```json").strip()
+        
+        questions = json.loads(generated_text)
+        return questions
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode error: {str(e)}")
+        return []
 
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
+# Dummy response of the backend (for testing purposes)
+API_response_result = {
+    'candidates': [{
+        'content': {
+            'parts': [{
+                'text': '```json\n[\n  {\n    "text": "What is the name of Amazon\'s cloud computing platform?",\n    "options": [\n      "AWS",\n      "Azure",\n      "Google Cloud Platform",\n      "IBM Cloud"\n    ],\n    "correct_answer": "AWS"\n  },\n  {\n    "text": "When was Amazon founded?",\n    "options": [\n      "1994",\n      "1995",\n      "1996",\n      "1997"\n    ],\n    "correct_answer": "1994"\n  },\n  {\n    "text": "Which of these is NOT an Amazon subsidiary?",\n    "options": [\n      "Whole Foods Market",\n      "IMDb",\n      "Netflix",\n      "Zappos"\n    ],\n    "correct_answer": "Netflix"\n  },\n  {\n    "text": "What is the name of Amazon\'s digital assistant?",\n    "options": [\n      "Alexa",\n      "Siri",\n      "Cortana",\n      "Google Assistant"\n    ],\n    "correct_answer": "Alexa"\n  },\n  {\n    "text": "Which of these is NOT a product category offered by Amazon?",\n    "options": [\n      "Electronics",\n      "Books",\n      "Clothing",\n      "Cars"\n    ],\n    "correct_answer": "Cars"\n  }\n]\n```'
+            }]
+        },
+        'role': 'model'
+    }],
+    'usageMetadata': {'promptTokenCount': 72, 'candidatesTokenCount': 335, 'totalTokenCount': 407}
+}
 
-        if line.startswith('**'):
-            if current_question:
-                questions.append(current_question)
-                current_question = {}
+generated_text = API_response_result['candidates'][0]['content']['parts'][0]['text']
+questions = parse_generated_text(generated_text)
+print(f"generated_text: {generated_text}")
+print(f"questions: {questions}")
 
-            correct_answer_started = False
-            incorrect_options_started = False
-            current_question["text"] = line.replace('**', '').strip()
-            current_question["options"] = []
-        elif line.startswith(('a)', 'b)', 'c)', 'd)')):
-            option = line.replace('**', '').strip()
-            current_question["options"].append(option)
-        elif line.startswith('Correct answer:'):
-            correct_answer_started = True
-            current_question["correct_answer"] = line.replace('Correct answer:', '').strip()
-        elif line.startswith('Incorrect options:'):
-            incorrect_options_started = True
-        elif correct_answer_started or incorrect_options_started:
-            continue
-    
-    if current_question:
-        questions.append(current_question)
-
-    return questions
