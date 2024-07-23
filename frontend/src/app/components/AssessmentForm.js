@@ -4,20 +4,28 @@
 
 import { useState } from 'react';
 import { generateAssessment } from '../../../lib/api';
+import { useRouter } from 'next/router';
+import { Oval } from 'react-loader-spinner';
 
 export default function AssessmentForm() {
   const [topic, setTopic] = useState('');
   const [assessmentType, setAssessmentType] = useState('mcq');
   const [questionCount, setQuestionCount] = useState(5);
+  const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
+  const router = useRouter();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setLoading(true);
     try {
       const data = await generateAssessment({ topic, assessmentType, questionCount });
       setResult(data);
+      router.push('/questions', { state: { questions: data.questions } });
     } catch (error) {
       console.error('Error:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -64,13 +72,11 @@ export default function AssessmentForm() {
           Generate Assessment
         </button>
       </form>
-      {result && (
-        <div className="mt-4 p-4 bg-gray-100 rounded-md">
-          <h3 className="text-lg font-semibold mb-2">Generated Assessment:</h3>
-          <pre className="whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre>
+      {loading && (
+        <div className="flex justify-center mt-4">
+          <Oval height={40} width={40} color="indigo" ariaLabel="loading" />
         </div>
       )}
     </div>
   );
 }
-

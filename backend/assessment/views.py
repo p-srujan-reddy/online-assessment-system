@@ -43,10 +43,10 @@ class GenerateAssessmentView(APIView):
                 result = response.json()
                 generated_text = result['candidates'][0]['content']['parts'][0]['text']
                 
+                # Parse the result
+                questions = parse_generated_text(generated_text)
 
-                # TODO: Parse the result and create Assessment, Question, and Answer objects
-
-                return Response({"result": generated_text}, status=status.HTTP_200_OK)
+                return Response({"questions": questions}, status=status.HTTP_200_OK)
             else:
                 logger.error(f"API request failed with status code {response.status_code}: {response.text}")
                 return Response({"error": f"API request failed: {response.text}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -54,3 +54,25 @@ class GenerateAssessmentView(APIView):
         except Exception as e:
             logger.error(f"An error occurred: {str(e)}")
             return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+def parse_generated_text(generated_text):
+    questions = []
+    lines = generated_text.split('\n')
+    current_question = {}
+    
+    for line in lines:
+        line = line.strip()
+        if line:
+            if line.startswith("Question:"):
+                if current_question:
+                    questions.append(current_question)
+                current_question = {"text": line, "options": []}
+            elif line.startswith("Option:"):
+                current_question["options"].append(line)
+            elif line.startswith("Answer:"):
+                current_question["correct_answer"] = line
+    if current_question:
+        questions.append(current_question)
+
+    return questions
