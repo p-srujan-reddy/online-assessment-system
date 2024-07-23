@@ -1,4 +1,5 @@
 # backend/assessment/views.py
+
 import logging
 import requests
 from rest_framework.views import APIView
@@ -65,25 +66,35 @@ def parse_generated_text(generated_text):
     lines = generated_text.split('\n')
     
     current_question = {}
-    
+    correct_answer_started = False
+    incorrect_options_started = False
+
     for line in lines:
         line = line.strip()
         if not line:
             continue
-        
+
         if line.startswith('**'):
             if current_question:
                 questions.append(current_question)
-            # New question
-            current_question = {"text": line, "options": [], "correct_answer": ""}
-        elif line.startswith('a)') or line.startswith('b)') or line.startswith('c)') or line.startswith('d)'):
-            # Option
-            current_question["options"].append(line)
-        elif line.startswith('**Correct Answer:**'):
-            # Correct answer
-            current_question["correct_answer"] = line.split(':')[1].strip()
+                current_question = {}
+
+            correct_answer_started = False
+            incorrect_options_started = False
+            current_question["text"] = line.replace('**', '').strip()
+            current_question["options"] = []
+        elif line.startswith(('a)', 'b)', 'c)', 'd)')):
+            option = line.replace('**', '').strip()
+            current_question["options"].append(option)
+        elif line.startswith('Correct answer:'):
+            correct_answer_started = True
+            current_question["correct_answer"] = line.replace('Correct answer:', '').strip()
+        elif line.startswith('Incorrect options:'):
+            incorrect_options_started = True
+        elif correct_answer_started or incorrect_options_started:
+            continue
     
     if current_question:
         questions.append(current_question)
-    
+
     return questions
