@@ -1,3 +1,5 @@
+// src/app/pages/index.js
+
 import AssessmentForm from '../components/AssessmentForm';
 
 export default function Home() {

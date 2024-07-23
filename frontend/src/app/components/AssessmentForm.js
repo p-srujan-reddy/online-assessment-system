@@ -1,13 +1,13 @@
-// ./components/AssessmentForm.js
+// src/app/components/AssessmentForm.js
 
 "use client";
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { generateAssessment } from '../../../lib/api';
-import { useRouter } from 'next/router';
-import { Oval } from 'react-loader-spinner';
+import LoadingSpinner from './LoadingSpinner'; // Assuming you have a LoadingSpinner component
 
-export default function AssessmentForm() {
+export default function AssessmentForm({ onQuestionsGenerated }) {
   const [topic, setTopic] = useState('');
   const [assessmentType, setAssessmentType] = useState('mcq');
   const [questionCount, setQuestionCount] = useState(5);
@@ -21,7 +21,8 @@ export default function AssessmentForm() {
     try {
       const data = await generateAssessment({ topic, assessmentType, questionCount });
       setResult(data);
-      router.push('/questions', { state: { questions: data.questions } });
+      onQuestionsGenerated(data); // Pass generated questions to parent component
+      router.push('/questions');
     } catch (error) {
       console.error('Error:', error);
     } finally {
@@ -69,12 +70,13 @@ export default function AssessmentForm() {
           />
         </div>
         <button type="submit" className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-          Generate Assessment
+          {loading ? <LoadingSpinner /> : 'Generate Assessment'}
         </button>
       </form>
-      {loading && (
-        <div className="flex justify-center mt-4">
-          <Oval height={40} width={40} color="indigo" ariaLabel="loading" />
+      {result && (
+        <div className="mt-4 p-4 bg-gray-100 rounded-md">
+          <h3 className="text-lg font-semibold mb-2">Generated Assessment:</h3>
+          <pre className="whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre>
         </div>
       )}
     </div>
