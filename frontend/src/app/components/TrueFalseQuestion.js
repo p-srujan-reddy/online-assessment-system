@@ -1,13 +1,13 @@
-// src/app/components/MCQQuestion.js
+// src/app/components/TrueFalseQuestion.js
 import React from 'react';
 
-const MCQQuestion = ({ question, questionIndex, handleInputChange, selectedAnswer, showResults }) => {
-  const getOptionStyle = (optionIndex) => {
+const TrueFalseQuestion = ({ question, questionIndex, handleInputChange, selectedAnswer, showResults }) => {
+  const getOptionStyle = (option) => {
     if (!showResults) return '';
-    if (question.options[optionIndex] === question.correct_answer) {
+    if (option === question.correct_answer) {
       return 'bg-green-200';
     }
-    if (selectedAnswer === question.options[optionIndex]) {
+    if (selectedAnswer === option) {
       return 'bg-red-200';
     }
     return '';
@@ -17,8 +17,8 @@ const MCQQuestion = ({ question, questionIndex, handleInputChange, selectedAnswe
     <div className="mb-4 p-4 border border-gray-300 rounded-md">
       <p className="mb-2 font-semibold">{question.text}</p>
       <div className="space-y-2">
-        {question.options.map((option, optionIndex) => (
-          <div key={optionIndex} className={`p-2 rounded-md ${getOptionStyle(optionIndex)}`}>
+        {['True', 'False'].map((option) => (
+          <div key={option} className={`p-2 rounded-md ${getOptionStyle(option)}`}>
             <label className="inline-flex items-center">
               <input
                 type="radio"
@@ -38,4 +38,4 @@ const MCQQuestion = ({ question, questionIndex, handleInputChange, selectedAnswe
   );
 };
 
-export default MCQQuestion;
+export default TrueFalseQuestion;

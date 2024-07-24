@@ -1,5 +1,4 @@
 // src/app/components/AssessmentForm.js
-
 "use client";
 
 import { useState } from 'react';
@@ -23,7 +22,7 @@ export default function AssessmentForm() {
       const data = await generateAssessment({ topic, assessmentType, questionCount });
       setQuestions(data.questions);
       setContextAssessmentType(assessmentType);
-      setContextTopic(topic); // Set topic in context
+      setContextTopic(topic);
       router.push('/questions');
     } catch (error) {
       console.error('Error:', error);
@@ -31,7 +30,6 @@ export default function AssessmentForm() {
       setLoading(false);
     }
   };
-
 
   return (
     <div className="max-w-md mx-auto mt-8 p-6 bg-white rounded-lg shadow-md">
@@ -57,7 +55,10 @@ export default function AssessmentForm() {
             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
           >
             <option value="mcq">Multiple Choice</option>
+            <option value="true_false">True or False</option>
+            <option value="fill_in_blank">Fill in the Blank</option>
             <option value="short_answer">Short Answer</option>
+            <option value="long_answer">Long Answer</option>
           </select>
         </div>
         <div>

@@ -3,9 +3,12 @@
 
 import React, { useState } from 'react';
 import { useAssessment } from '../context/AssessmentContext';
-import { scoreAnswers } from '../../../lib/api';
+import { scoreShortAnswers, scoreLongAnswers, scoreFillInTheBlanks } from '../../../lib/api';
 import MCQQuestion from './MCQQuestion';
 import ShortAnswerQuestion from './ShortAnswerQuestion';
+import TrueFalseQuestion from './TrueFalseQuestion';
+import FillInBlankQuestion from './FillInBlankQuestion';
+import LongAnswerQuestion from './LongAnswerQuestion';
 
 const QuestionList = () => {
   const { questions, assessmentType, topic } = useAssessment();
@@ -24,36 +27,69 @@ const QuestionList = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    let calculatedScore = 0;
+    const answersToScore = [];
   
-    if (assessmentType === 'mcq') {
-      // Calculate score for MCQs on the client side
-      let calculatedScore = 0;
-      questions.forEach((question, questionIndex) => {
-        if (selectedAnswers[questionIndex] === question.correct_answer) {
-          calculatedScore += 1;
-        }
-      });
+    questions.forEach((question, questionIndex) => {
+      const userAnswer = selectedAnswers[questionIndex] || '';
+      const correctAnswer = question.correct_answer;
+      let isCorrect = false;
   
-      setScore(calculatedScore);
-      setShowResults(true);
-    } else {
-      // For short answer questions, send the answers to the backend for scoring
-      const answers = questions.map((question, questionIndex) => ({
-        type: question.type,
-        text: question.text,
-        user_answer: selectedAnswers[questionIndex] || '',
-        correct_answer: question.correct_answer,
-      }));
+      if (question.type === 'mcq' || question.type === 'true_false') {
+        isCorrect = userAnswer === correctAnswer;
+        calculatedScore += isCorrect ? 1 : 0;
+      } else if (question.type === 'fill_in_blank') {
+        answersToScore.push({
+          type: question.type,
+          text: question.text,
+          user_answer: userAnswer,
+          correct_answer: correctAnswer,
+        });
+      } else {
+        answersToScore.push({
+          type: question.type,
+          text: question.text,
+          user_answer: userAnswer,
+          correct_answer: correctAnswer,
+        });
+      }
   
+      results[questionIndex] = { is_correct: isCorrect };
+    });
+  
+    setScore(calculatedScore);
+  
+    if (answersToScore.length > 0) {
       try {
-        const result = await scoreAnswers({ answers, topic });
-        setScore(result.total_score);
-        setResults(result.results); // Store correctness and verification info
-        setShowResults(true);
+        const fillInBlankAnswers = answersToScore.filter(answer => answer.type === 'fill_in_blank');
+        const otherAnswers = answersToScore.filter(answer => answer.type !== 'fill_in_blank');
+
+        if (fillInBlankAnswers.length > 0) {
+          const fillInBlankResult = await scoreFillInTheBlanks({ answers: fillInBlankAnswers, topic });
+          fillInBlankResult.results.forEach((res, idx) => {
+            const index = questions.findIndex(q => q.text === fillInBlankAnswers[idx].text);
+            results[index] = res;
+            calculatedScore += res.is_correct ? 1 : 0;
+          });
+        }
+
+        if (otherAnswers.length > 0) {
+          const result = await scoreShortAnswers({ answers: otherAnswers, topic });
+          result.results.forEach((res, idx) => {
+            const index = questions.findIndex(q => q.text === otherAnswers[idx].text);
+            results[index] = res;
+            calculatedScore += res.is_correct ? 1 : 0;
+          });
+        }
+
+        setScore(calculatedScore);
       } catch (error) {
         console.error('Error scoring answers:', error);
       }
     }
+  
+    setResults(results);
+    setShowResults(true);
   };
 
   const handleReattempt = () => {
@@ -61,7 +97,7 @@ const QuestionList = () => {
     setShowResults(false);
     setScore(0);
     setResetKey((prevKey) => prevKey + 1);
-    setResults([]); // Reset results
+    setResults([]);
   };
 
   return (
@@ -69,7 +105,7 @@ const QuestionList = () => {
       <form onSubmit={handleSubmit} key={resetKey}>
         {questions.map((question, questionIndex) => (
           <div key={questionIndex}>
-            {question.type === 'mcq' ? (
+            {question.type === 'mcq' && (
               <MCQQuestion
                 question={question}
                 questionIndex={questionIndex}
@@ -77,15 +113,46 @@ const QuestionList = () => {
                 selectedAnswer={selectedAnswers[questionIndex]}
                 showResults={showResults}
               />
-            ) : (
+            )}
+            {question.type === 'true_false' && (
+              <TrueFalseQuestion
+                question={question}
+                questionIndex={questionIndex}
+                handleInputChange={handleInputChange}
+                selectedAnswer={selectedAnswers[questionIndex]}
+                showResults={showResults}
+              />
+            )}
+            {question.type === 'fill_in_blank' && (
+              <FillInBlankQuestion
+                question={question}
+                questionIndex={questionIndex}
+                handleInputChange={handleInputChange}
+                selectedAnswer={selectedAnswers[questionIndex]}
+                showResults={showResults}
+                isCorrect={results[questionIndex]?.is_correct}
+              />
+            )}
+            {question.type === 'short_answer' && (
               <ShortAnswerQuestion
                 question={question}
                 questionIndex={questionIndex}
                 handleInputChange={handleInputChange}
                 selectedAnswer={selectedAnswers[questionIndex]}
                 showResults={showResults}
-                isCorrect={results[questionIndex]?.is_correct} // Pass correctness info
-                verifiedByLLM={results[questionIndex]?.verified_by_llm} // Pass verification info
+                isCorrect={results[questionIndex]?.is_correct}
+                verifiedByLLM={results[questionIndex]?.verified_by_llm}
+              />
+            )}
+            {question.type === 'long_answer' && (
+              <LongAnswerQuestion
+                question={question}
+                questionIndex={questionIndex}
+                handleInputChange={handleInputChange}
+                selectedAnswer={selectedAnswers[questionIndex]}
+                showResults={showResults}
+                isCorrect={results[questionIndex]?.is_correct}
+                verifiedByLLM={results[questionIndex]?.verified_by_llm}
               />
             )}
           </div>
