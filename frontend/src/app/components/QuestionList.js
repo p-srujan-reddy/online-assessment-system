@@ -13,6 +13,7 @@ const QuestionList = () => {
   const [showResults, setShowResults] = useState(false);
   const [score, setScore] = useState(0);
   const [resetKey, setResetKey] = useState(0);
+  const [results, setResults] = useState([]);
 
   const handleInputChange = (questionIndex, value) => {
     setSelectedAnswers({
@@ -47,6 +48,7 @@ const QuestionList = () => {
       try {
         const result = await scoreAnswers({ answers, topic });
         setScore(result.total_score);
+        setResults(result.results); // Store correctness and verification info
         setShowResults(true);
       } catch (error) {
         console.error('Error scoring answers:', error);
@@ -59,6 +61,7 @@ const QuestionList = () => {
     setShowResults(false);
     setScore(0);
     setResetKey((prevKey) => prevKey + 1);
+    setResults([]); // Reset results
   };
 
   return (
@@ -81,6 +84,8 @@ const QuestionList = () => {
                 handleInputChange={handleInputChange}
                 selectedAnswer={selectedAnswers[questionIndex]}
                 showResults={showResults}
+                isCorrect={results[questionIndex]?.is_correct} // Pass correctness info
+                verifiedByLLM={results[questionIndex]?.verified_by_llm} // Pass verification info
               />
             )}
           </div>

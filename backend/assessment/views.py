@@ -73,7 +73,7 @@ def parse_generated_text(generated_text, assessment_type):
     except json.JSONDecodeError as e:
         logger.error(f"JSON decode error: {str(e)}")
         return []
-    
+ 
 class ScoreShortAnswersView(APIView):
     def post(self, request):
         answers = request.data.get('answers')
@@ -86,7 +86,7 @@ class ScoreShortAnswersView(APIView):
             logger.error("Missing required fields in the request data")
             return Response({"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST)
 
-        scores = []
+        results = []
         
         for answer in answers:
             question_type = answer.get('type')
@@ -98,7 +98,7 @@ class ScoreShortAnswersView(APIView):
 
             if not all([question_type, question_text, user_answer, correct_answer]):
                 logger.error("Missing required fields in the answer data")
-                scores.append(0)
+                results.append({"score": 0, "is_correct": False, "verified_by_llm": False})
                 continue
 
             # Update prompt to evaluate relevance based on the correct answer
@@ -138,21 +138,23 @@ class ScoreShortAnswersView(APIView):
                         score = float(score_text)
                         
                         # Round score to 0 or 1
-                        rounded_score = 1 if score >= 0.5 else 0
-                        logger.debug(f"Rounded score {rounded_score}")
+                        is_correct = score >= 0.5
+                        rounded_score = 1 if is_correct else 0
+                        logger.debug(f"Rounded score {rounded_score}, is_correct {is_correct}")
                         
                     except ValueError:
                         logger.error(f"Failed to convert score from response: {score_text}")
                         rounded_score = 0
+                        is_correct = False
                     
-                    scores.append(rounded_score)
+                    results.append({"score": rounded_score, "is_correct": is_correct, "verified_by_llm": True})
                 else:
                     logger.error(f"API request failed with status code {response.status_code}: {response.text}")
-                    scores.append(0)
+                    results.append({"score": 0, "is_correct": False, "verified_by_llm": False})
 
             except Exception as e:
                 logger.error(f"An error occurred: {str(e)}")
-                scores.append(0)
+                results.append({"score": 0, "is_correct": False, "verified_by_llm": False})
 
-        total_score = sum(scores)
-        return Response({"total_score": total_score}, status=status.HTTP_200_OK)
+        total_score = sum(result['score'] for result in results)
+        return Response({"total_score": total_score, "results": results}, status=status.HTTP_200_OK)
