@@ -114,7 +114,7 @@ class GenerateAssessmentView(APIView):
                 f"Generate {question_count} short answer questions about {topic} in JSON format. "
                 f"Each question should have a 'text' field for the question and a 'correct_answer' field for the correct answer."
             )
-        elif assessment_type == 'short_answer':
+        elif assessment_type == 'long_answer':
             prompt = (
                 f"Generate {question_count} long answer questions about {topic} in JSON format. "
                 f"Each question should have a 'text' field for the question and a 'correct_answer' field for the correct answer."
@@ -203,16 +203,18 @@ class ScoreFillInTheBlanksView(APIView):
 
             for user_answer, correct_answer in zip(user_answers, correct_answers):
                 prompt = (
-                    f"Evaluate the relevance of the following user answer to the correct answer for a given question. "
-                    f"Topic: {topic}\n"
-                    f"Question Type: fill_in_the_blanks\n"
-                    f"Question: {question_text}\n"
-                    f"Correct Answer: {correct_answer}\n"
-                    f"User's Answer: {user_answer}\n"
-                    f"Provide a probability score between 0 and 1 representing how relevant the user's answer is to the correct answer. Give only probability score number."
-                )
+                            f"Evaluate the relevance of the following user's answer to the correct answer for a given fill-in-the-blanks question. "
+                            f"Analyze the question context to ensure the user's answer fits appropriately.\n"
+                            f"Topic: {topic}\n"
+                            f"Question Type: fill_in_the_blanks\n"
+                            f"Question: {question_text}\n"
+                            f"Correct Answer: {correct_answer}\n"
+                            f"User's Answer: {user_answer}\n"
+                            f"Provide a probability score between 0 and 1 representing how relevant the user's answer is to the correct answer. Give only the probability score number."
+                        )
 
                 score_text = make_api_request(prompt)
+                print(f"score_text {score_text}")
                 if score_text is not None:
                     try:
                         score = float(score_text)
@@ -238,4 +240,5 @@ class ScoreFillInTheBlanksView(APIView):
                 results.append(future.result())
 
         total_score = sum(result['score'] for result in results)
+        print(f"total_score {total_score}")
         return Response({"total_score": total_score, "results": results}, status=status.HTTP_200_OK)

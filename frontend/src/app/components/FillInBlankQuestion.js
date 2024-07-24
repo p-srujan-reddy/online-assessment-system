@@ -1,6 +1,6 @@
 import React from 'react';
 
-const FillInBlankQuestion = ({ question, questionIndex, handleInputChange, selectedAnswers = [], showResults, isCorrect = [] }) => {
+const FillInBlankQuestion = ({ question, questionIndex, handleInputChange, selectedAnswer = [], showResults, isCorrect = [] }) => {
   // Determine the style of each input field based on correctness
   const getInputStyle = (index) => {
     if (!showResults) return '';
@@ -9,7 +9,7 @@ const FillInBlankQuestion = ({ question, questionIndex, handleInputChange, selec
 
   // Handle changes to input fields
   const handleChange = (index, value) => {
-    const newAnswers = [...selectedAnswers];
+    const newAnswers = [...selectedAnswer];
     newAnswers[index] = value;
     handleInputChange(questionIndex, newAnswers);
   };
@@ -19,18 +19,20 @@ const FillInBlankQuestion = ({ question, questionIndex, handleInputChange, selec
     const isBlank = i % 2 === 1; // Identify if part is a blank
     const index = Math.floor(i / 2);
 
-    return isBlank ? (
-      <input
-        key={`blank-${index}`}
-        type="text"
-        value={selectedAnswers[index] || ''}
-        onChange={(e) => handleChange(index, e.target.value)}
-        className={`inline-block mx-1 p-2 border rounded-md ${getInputStyle(index)}`}
-        disabled={showResults}
-      />
-    ) : (
-      part
-    );
+    if (isBlank) {
+      return (
+        <input
+          key={`blank-${index}`}
+          type="text"
+          value={selectedAnswer[index] || ''}
+          onChange={(e) => handleChange(index, e.target.value)}
+          className={`inline-block mx-1 p-2 border rounded-md ${getInputStyle(index)}`}
+          disabled={showResults}
+        />
+      );
+    } else {
+      return part;
+    }
   });
 
   return (
