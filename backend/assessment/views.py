@@ -1,5 +1,6 @@
 # backend/assessment/views.py
 import logging
+import re
 import requests
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -72,9 +73,7 @@ def parse_generated_text(generated_text, assessment_type):
     except json.JSONDecodeError as e:
         logger.error(f"JSON decode error: {str(e)}")
         return []
-
-
-logger = logging.getLogger(__name__)
+    
 class ScoreShortAnswersView(APIView):
     def post(self, request):
         answers = request.data.get('answers')
@@ -93,15 +92,25 @@ class ScoreShortAnswersView(APIView):
             question_type = answer.get('type')
             question_text = answer.get('text')
             user_answer = answer.get('user_answer')
+            correct_answer = answer.get('correct_answer')
 
             logger.debug(f"Processing answer: {answer}")
 
-            if not all([question_type, question_text, user_answer]):
+            if not all([question_type, question_text, user_answer, correct_answer]):
                 logger.error("Missing required fields in the answer data")
                 scores.append(0)
                 continue
 
-            prompt = f"Evaluate the following {question_type} question about {topic}.\n\nQuestion: {question_text}\nStudent's Answer: {user_answer}\nProvide a score out of 1 based on the relevance and correctness."
+            # Update prompt to evaluate relevance based on the correct answer
+            prompt = (
+                f"Evaluate the relevance of the following user answer to the correct answer for a given question. "
+                f"Topic: {topic}\n"
+                f"Question Type: {question_type}\n"
+                f"Question: {question_text}\n"
+                f"Correct Answer: {correct_answer}\n"
+                f"User's Answer: {user_answer}\n"
+                f"Provide a probability score between 0 and 1 representing how relevant the user's answer is to the correct answer. Give only probability score number"
+            )
 
             payload = {
                 "contents": [
@@ -120,8 +129,23 @@ class ScoreShortAnswersView(APIView):
 
                 if response.status_code == 200:
                     result = response.json()
-                    score = int(result['candidates'][0]['content']['parts'][0]['text'].strip())
-                    scores.append(score)
+                    score_text = result['candidates'][0]['content']['parts'][0]['text'].strip()
+                    
+                    logger.debug(f"score_text {score_text}")
+                    
+                    try:
+                        # Directly convert score_text to float
+                        score = float(score_text)
+                        
+                        # Round score to 0 or 1
+                        rounded_score = 1 if score >= 0.5 else 0
+                        logger.debug(f"Rounded score {rounded_score}")
+                        
+                    except ValueError:
+                        logger.error(f"Failed to convert score from response: {score_text}")
+                        rounded_score = 0
+                    
+                    scores.append(rounded_score)
                 else:
                     logger.error(f"API request failed with status code {response.status_code}: {response.text}")
                     scores.append(0)

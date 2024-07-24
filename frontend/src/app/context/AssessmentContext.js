@@ -5,17 +5,16 @@ import { createContext, useContext, useState } from 'react';
 
 const AssessmentContext = createContext();
 
-export function AssessmentProvider({ children }) {
+export const AssessmentProvider = ({ children }) => {
   const [questions, setQuestions] = useState([]);
   const [assessmentType, setAssessmentType] = useState('mcq');
+  const [topic, setTopic] = useState('');
 
   return (
-    <AssessmentContext.Provider value={{ questions, setQuestions, assessmentType, setAssessmentType }}>
+    <AssessmentContext.Provider value={{ questions, setQuestions, assessmentType, setAssessmentType, topic, setTopic }}>
       {children}
     </AssessmentContext.Provider>
   );
 }
 
-export function useAssessment() {
-  return useContext(AssessmentContext);
-}
+export const useAssessment = () => useContext(AssessmentContext);

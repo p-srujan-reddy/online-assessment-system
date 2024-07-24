@@ -14,7 +14,7 @@ export default function AssessmentForm() {
   const [questionCount, setQuestionCount] = useState(5);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
-  const { setQuestions, setAssessmentType: setContextAssessmentType } = useAssessment();
+  const { setQuestions, setAssessmentType: setContextAssessmentType, setTopic: setContextTopic } = useAssessment();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -22,7 +22,8 @@ export default function AssessmentForm() {
     try {
       const data = await generateAssessment({ topic, assessmentType, questionCount });
       setQuestions(data.questions);
-      setContextAssessmentType(assessmentType); // Store assessment type in context
+      setContextAssessmentType(assessmentType);
+      setContextTopic(topic); // Set topic in context
       router.push('/questions');
     } catch (error) {
       console.error('Error:', error);
@@ -30,6 +31,7 @@ export default function AssessmentForm() {
       setLoading(false);
     }
   };
+
 
   return (
     <div className="max-w-md mx-auto mt-8 p-6 bg-white rounded-lg shadow-md">

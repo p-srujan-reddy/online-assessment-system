@@ -41,6 +41,7 @@ const QuestionList = () => {
         type: question.type,
         text: question.text,
         user_answer: selectedAnswers[questionIndex] || '',
+        correct_answer: question.correct_answer,
       }));
   
       try {
@@ -52,7 +53,7 @@ const QuestionList = () => {
       }
     }
   };
-  
+
   const handleReattempt = () => {
     setSelectedAnswers({});
     setShowResults(false);
