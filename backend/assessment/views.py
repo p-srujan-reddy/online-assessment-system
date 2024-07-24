@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.conf import settings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ def parse_generated_text(generated_text, assessment_type):
     except json.JSONDecodeError as e:
         logger.error(f"JSON decode error: {str(e)}")
         return []
- 
+
 class ScoreShortAnswersView(APIView):
     def post(self, request):
         answers = request.data.get('answers')
@@ -87,19 +88,16 @@ class ScoreShortAnswersView(APIView):
             return Response({"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST)
 
         results = []
-        
-        for answer in answers:
+
+        # Function to process each answer
+        def process_answer(answer):
             question_type = answer.get('type')
             question_text = answer.get('text')
             user_answer = answer.get('user_answer')
             correct_answer = answer.get('correct_answer')
 
-            logger.debug(f"Processing answer: {answer}")
-
             if not all([question_type, question_text, user_answer, correct_answer]):
-                logger.error("Missing required fields in the answer data")
-                results.append({"score": 0, "is_correct": False, "verified_by_llm": False})
-                continue
+                return {"score": 0, "is_correct": False, "verified_by_llm": False}
 
             # Update prompt to evaluate relevance based on the correct answer
             prompt = (
@@ -147,14 +145,20 @@ class ScoreShortAnswersView(APIView):
                         rounded_score = 0
                         is_correct = False
                     
-                    results.append({"score": rounded_score, "is_correct": is_correct, "verified_by_llm": True})
+                    return {"score": rounded_score, "is_correct": is_correct, "verified_by_llm": True}
                 else:
                     logger.error(f"API request failed with status code {response.status_code}: {response.text}")
-                    results.append({"score": 0, "is_correct": False, "verified_by_llm": False})
+                    return {"score": 0, "is_correct": False, "verified_by_llm": False}
 
             except Exception as e:
                 logger.error(f"An error occurred: {str(e)}")
-                results.append({"score": 0, "is_correct": False, "verified_by_llm": False})
+                return {"score": 0, "is_correct": False, "verified_by_llm": False}
+
+        # Use ThreadPoolExecutor to process answers concurrently
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_answer = {executor.submit(process_answer, answer): answer for answer in answers}
+            for future in as_completed(future_to_answer):
+                results.append(future.result())
 
         total_score = sum(result['score'] for result in results)
         return Response({"total_score": total_score, "results": results}, status=status.HTTP_200_OK)
