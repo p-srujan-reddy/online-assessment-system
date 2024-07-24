@@ -3,108 +3,109 @@
 
 import React, { useState } from 'react';
 import { useAssessment } from '../context/AssessmentContext';
+import { scoreAnswers } from '../../../lib/api';
+import MCQQuestion from './MCQQuestion';
+import ShortAnswerQuestion from './ShortAnswerQuestion';
 
 const QuestionList = () => {
-  const { questions } = useAssessment();
+  const { questions, assessmentType, topic } = useAssessment();
   const [selectedAnswers, setSelectedAnswers] = useState({});
   const [showResults, setShowResults] = useState(false);
   const [score, setScore] = useState(0);
-  const [resetKey, setResetKey] = useState(0); // Key to force re-render
+  const [resetKey, setResetKey] = useState(0);
 
-  const handleOptionChange = (questionIndex, optionIndex) => {
+  const handleInputChange = (questionIndex, value) => {
     setSelectedAnswers({
       ...selectedAnswers,
-      [questionIndex]: optionIndex,
+      [questionIndex]: value,
     });
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    let calculatedScore = 0;
-
-    questions.forEach((question, questionIndex) => {
-      if (questions[questionIndex].options[selectedAnswers[questionIndex]] === questions[questionIndex].correct_answer) {
-        calculatedScore += 1;
+  
+    if (assessmentType === 'mcq') {
+      // Calculate score for MCQs on the client side
+      let calculatedScore = 0;
+      questions.forEach((question, questionIndex) => {
+        if (selectedAnswers[questionIndex] === question.correct_answer) {
+          calculatedScore += 1;
+        }
+      });
+  
+      setScore(calculatedScore);
+      setShowResults(true);
+    } else {
+      // For short answer questions, send the answers to the backend for scoring
+      const answers = questions.map((question, questionIndex) => ({
+        type: question.type,
+        text: question.text,
+        user_answer: selectedAnswers[questionIndex] || '',
+      }));
+  
+      try {
+        const result = await scoreAnswers({ answers, topic });
+        setScore(result.total_score);
+        setShowResults(true);
+      } catch (error) {
+        console.error('Error scoring answers:', error);
       }
-    });
-
-    setScore(calculatedScore);
-    setShowResults(true);
+    }
   };
-
+  
   const handleReattempt = () => {
     setSelectedAnswers({});
     setShowResults(false);
     setScore(0);
-    setResetKey(prevKey => prevKey + 1); // Force re-render
-  };
-
-  const getOptionStyle = (questionIndex, optionIndex) => {
-    if (!showResults) return '';
-    if (questions[questionIndex].options[optionIndex] === questions[questionIndex].correct_answer) {
-      return 'bg-green-200';
-    }
-    if (selectedAnswers[questionIndex] === optionIndex) {
-      return 'bg-red-200';
-    }
-    return '';
+    setResetKey((prevKey) => prevKey + 1);
   };
 
   return (
-    <div className="max-w-3xl mx-auto mt-8 p-6 bg-white rounded-lg shadow-md" key={resetKey}>
-      <h2 className="text-2xl font-bold mb-4 text-gray-800">Generated Questions</h2>
-      {showResults && (
-        <div className="mb-4 p-4 bg-blue-100 rounded-md text-blue-800">
-          <h3 className="text-xl font-semibold">Your Score: {score} / {questions.length}</h3>
-        </div>
-      )}
-      <form onSubmit={handleSubmit}>
-        <ul className="space-y-6">
-          {questions.map((question, questionIndex) => (
-            <li key={questionIndex} className="p-4 bg-gray-50 rounded-lg shadow-sm">
-              <div>
-                <p className="font-semibold">{question.text}</p>
-                {question.options.map((option, optionIndex) => (
-                  <div key={optionIndex} className={`p-2 rounded ${getOptionStyle(questionIndex, optionIndex)}`}>
-                    <label className="flex items-center space-x-2">
-                      <input
-                        type="radio"
-                        name={`question-${questionIndex}`}
-                        value={option}
-                        checked={selectedAnswers[questionIndex] === optionIndex}
-                        onChange={() => handleOptionChange(questionIndex, optionIndex)}
-                        className="form-radio h-4 w-4 text-indigo-600"
-                      />
-                      <span>{option}</span>
-                    </label>
-                  </div>
-                ))}
-                {showResults && (
-                  <div className="mt-2">
-                    <p className="text-sm text-green-600"><strong>Correct Answer:</strong> {question.correct_answer}</p>
-                  </div>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
-        {!showResults ? (
+    <div className="mt-8">
+      <form onSubmit={handleSubmit} key={resetKey}>
+        {questions.map((question, questionIndex) => (
+          <div key={questionIndex}>
+            {question.type === 'mcq' ? (
+              <MCQQuestion
+                question={question}
+                questionIndex={questionIndex}
+                handleInputChange={handleInputChange}
+                selectedAnswer={selectedAnswers[questionIndex]}
+                showResults={showResults}
+              />
+            ) : (
+              <ShortAnswerQuestion
+                question={question}
+                questionIndex={questionIndex}
+                handleInputChange={handleInputChange}
+                selectedAnswer={selectedAnswers[questionIndex]}
+                showResults={showResults}
+              />
+            )}
+          </div>
+        ))}
+        {!showResults && (
           <button
             type="submit"
-            className="mt-6 w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+            className="mt-4 py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
           >
             Submit Answers
           </button>
-        ) : (
-          <button
-            type="button"
-            onClick={handleReattempt}
-            className="mt-6 w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          >
-            Reattempt Assessment
-          </button>
         )}
       </form>
+      {showResults && (
+        <div className="mt-4">
+          <p className="text-lg font-medium">
+            Your Score: {score} / {questions.length}
+          </p>
+          <button
+            onClick={handleReattempt}
+            className="mt-2 py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+          >
+            Reattempt
+          </button>
+        </div>
+      )}
     </div>
   );
 };
