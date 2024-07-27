@@ -7,6 +7,7 @@ from .views import (
     ScoreShortAnswersView, 
     ScoreLongAnswersView, 
     ScoreFillInTheBlanksView, 
+    UploadDocumentView,
 )
 
 urlpatterns = [
@@ -14,4 +15,5 @@ urlpatterns = [
     path('score-short-answers/', ScoreShortAnswersView.as_view(), name='score-short-answers'),
     path('score-long-answers/', ScoreLongAnswersView.as_view(), name='score-long-answers'),
     path('score-fill-in-the-blanks/', ScoreFillInTheBlanksView.as_view(), name='score-fill-in-the-blanks'),
+    path('upload-document/', UploadDocumentView.as_view(), name='upload-document'),
 ]

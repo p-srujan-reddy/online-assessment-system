@@ -8,6 +8,17 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 import logging
+import os
+import tempfile
+from rest_framework.parsers import MultiPartParser
+from django.shortcuts import render
+
+from django.views import View
+
+from django.core.files.storage import default_storage
+from .utils import process_document  # Adjust the import based on where you define process_document
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +225,6 @@ class ScoreFillInTheBlanksView(APIView):
                         )
 
                 score_text = make_api_request(prompt)
-                print(f"score_text {score_text}")
                 if score_text is not None:
                     try:
                         score = float(score_text)
@@ -242,3 +252,25 @@ class ScoreFillInTheBlanksView(APIView):
         total_score = sum(result['score'] for result in results)
         print(f"total_score {total_score}")
         return Response({"total_score": total_score, "results": results}, status=status.HTTP_200_OK)
+
+
+class UploadDocumentView(View):
+    
+    def post(self, request, *args, **kwargs):
+        file = request.FILES.get('document')
+        topic = request.POST.get('topic')  # Ensure the topic is provided in the request
+
+        if not file:
+            return JsonResponse({'error': 'No document uploaded'}, status=400)
+        if not topic:
+            return JsonResponse({'error': 'Topic is required'}, status=400)
+
+        # Save the file
+        file_path = default_storage.save(file.name, file)
+        file_url = default_storage.url(file_path)
+        
+        # Process the document
+        process_document(file_url, topic)  # Pass the topic to the process_document function
+        
+        return JsonResponse({'message': 'Document uploaded and processed successfully'})
+

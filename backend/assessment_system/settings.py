@@ -141,13 +141,19 @@ CORS_ALLOW_ALL_ORIGINS = True  # For development only. Configure properly for pr
 
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # Add your Next.js frontend URL
+    "http://localhost:3000", 
+    'https://localhost:3000',# Add your Next.js frontend URL
 ]
 
 CORS_ALLOW_CREDENTIALS = True
 
 CORS_ALLOW_HEADERS = list(default_headers) + [
     'content-type',
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:3000",
+    "https://localhost:3000",
 ]
 
 GOOGLE_GENERATIVE_AI_API_KEY = os.getenv('GOOGLE_API_KEY')
