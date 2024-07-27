@@ -16,8 +16,9 @@ from django.shortcuts import render
 from django.views import View
 
 from django.core.files.storage import default_storage
-from .utils import process_document  # Adjust the import based on where you define process_document
-
+from .utils import process_document, generate_questions
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 
 
 logger = logging.getLogger(__name__)
@@ -98,50 +99,27 @@ class GenerateAssessmentView(APIView):
         topic = request.data.get('topic')
         assessment_type = request.data.get('assessmentType')
         question_count = request.data.get('questionCount')
+        use_document = request.data.get('useDocument', False)
 
         if not all([topic, assessment_type, question_count]):
             logger.error("Missing required fields in the request data")
             return Response({"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Create the prompt template
-        if assessment_type == 'mcq':
-            prompt = (
-                f"Generate {question_count} {assessment_type} questions about {topic} in JSON format. "
-                f"Each question should have a 'text' field for the question, an 'options' field for the answer options, "
-                f"and a 'correct_answer' field for the correct answer. If it's a multiple-choice question, 'options' should include the correct answer and 3 incorrect options."
-            )
-        elif assessment_type == 'true_false':
-            prompt = (
-                f"Generate {question_count} {assessment_type} questions about {topic} in JSON format. "
-                f"Each question should have a 'text' field for the question and a 'correct_answer' field which should be 'True' or 'False'."
-            )
-        elif assessment_type == 'fill_in_blank':
-            prompt = (
-                f"Generate {question_count} {assessment_type} questions about {topic} in JSON format. "
-                f"Each question should have a 'text' field for the question with blanks represented by underscores and a 'correct_answer' field with the correct answer to fill in the blanks."
-            )
-        elif assessment_type == 'short_answer':
-            prompt = (
-                f"Generate {question_count} short answer questions about {topic} in JSON format. "
-                f"Each question should have a 'text' field for the question and a 'correct_answer' field for the correct answer."
-            )
-        elif assessment_type == 'long_answer':
-            prompt = (
-                f"Generate {question_count} long answer questions about {topic} in JSON format. "
-                f"Each question should have a 'text' field for the question and a 'correct_answer' field for the correct answer."
-            )
-        else:
-            logger.error(f"Unsupported assessment type: {assessment_type}")
-            return Response({"error": "Unsupported assessment type"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            if use_document:
+                # Retrieve the most recent document for this topic
+                collection = process_document(f"{topic}_collection")
+                questions = generate_questions(topic, assessment_type, collection, question_count)
+            else:
+                questions = generate_questions(topic, assessment_type, question_count=question_count)
 
-        generated_text = make_api_request(prompt)
-        print(f"generated_text {generated_text}")
-        if generated_text is not None:
-            questions = parse_generated_text(generated_text, assessment_type)
-            print(f"questions {questions}")
             return Response({"questions": questions, "assessmentType": assessment_type}, status=status.HTTP_200_OK)
-        else:
-            return Response({"error": "API request failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except ValueError as e:
+            logger.error(f"Invalid assessment type: {str(e)}")
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Error generating assessment: {str(e)}")
+            return Response({"error": "Failed to generate assessment"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class ScoreShortAnswersView(APIView):
     def post(self, request):
@@ -254,23 +232,27 @@ class ScoreFillInTheBlanksView(APIView):
         return Response({"total_score": total_score, "results": results}, status=status.HTTP_200_OK)
 
 
-class UploadDocumentView(View):
-    
+class UploadDocumentView(APIView):
+    @method_decorator(csrf_exempt)
     def post(self, request, *args, **kwargs):
         file = request.FILES.get('document')
-        topic = request.POST.get('topic')  # Ensure the topic is provided in the request
+        topic = request.POST.get('topic')
 
         if not file:
             return JsonResponse({'error': 'No document uploaded'}, status=400)
         if not topic:
             return JsonResponse({'error': 'Topic is required'}, status=400)
 
-        # Save the file
-        file_path = default_storage.save(file.name, file)
-        file_url = default_storage.url(file_path)
-        
-        # Process the document
-        process_document(file_url, topic)  # Pass the topic to the process_document function
-        
-        return JsonResponse({'message': 'Document uploaded and processed successfully'})
+        try:
+            # Save the file
+            file_path = default_storage.save(file.name, file)
+            file_url = default_storage.url(file_path)
+            
+            # Process the document
+            collection = process_document(file_url, topic)
+            
+            return JsonResponse({'message': 'Document uploaded and processed successfully'})
+        except Exception as e:
+            logger.error(f"Error processing document: {str(e)}")
+            return JsonResponse({'error': 'Failed to process document'}, status=500)
 
