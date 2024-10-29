@@ -8,19 +8,10 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 import logging
+from rest_framework.parsers import MultiPartParser, FormParser
+from .models import UploadedFile
 import os
-import tempfile
-from rest_framework.parsers import MultiPartParser
-from django.shortcuts import render
-
-from django.views import View
-
-from django.core.files.storage import default_storage
-from .utils import process_document, generate_questions
-from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import csrf_exempt
-
-
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -231,31 +222,21 @@ class ScoreFillInTheBlanksView(APIView):
         print(f"total_score {total_score}")
         return Response({"total_score": total_score, "results": results}, status=status.HTTP_200_OK)
 
-class UploadDocumentView(View):
-    @method_decorator(csrf_exempt, name='dispatch')
+
+
+class FileUploadView(APIView):
+    parser_classes = (MultiPartParser, FormParser)
+
     def post(self, request, *args, **kwargs):
-        try:
-            token = request.META.get('HTTP_X_CSRFTOKEN')
-            logger.debug(f'CSRF Token: {token}')
-            file = request.FILES.get('document')
-            topic = request.POST.get('topic')
+        files = request.FILES.getlist('documents')
+        topic = request.data.get('topic')
+        uploaded_files = []
+        
+        for file in files:
+            uploaded_file = UploadedFile.objects.create(file=file)
+            uploaded_files.append(uploaded_file)
+            file_path = os.path.join(settings.MEDIA_ROOT, uploaded_file.file.name)
+            logger.info(f"File saved to: {file_path}")
+            print(f"File saved to: {file_path}")  # Optional: Print to console
 
-            if not file:
-                return JsonResponse({'error': 'No file uploaded'}, status=400)
-
-            if not topic:
-                return JsonResponse({'error': 'Topic is required'}, status=400)
-
-            # Save the file
-            file_path = os.path.join(settings.MEDIA_ROOT, file.name)
-            with open(file_path, 'wb+') as destination:
-                for chunk in file.chunks():
-                    destination.write(chunk)
-
-            # Process the document
-            collection = process_document(file_path, topic)
-            return JsonResponse({'message': 'File uploaded successfully', 'collection': collection}, status=200)
-
-        except Exception as e:
-            logger.error(f"Error during file upload: {str(e)}")
-            return JsonResponse({'error': str(e)}, status=500)
+        return Response({'message': 'Files uploaded successfully'}, status=status.HTTP_201_CREATED)
