@@ -25,12 +25,10 @@ export default function AssessmentForm() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
-
     try {
-      // Upload documents
-      const uploadPromises = Array.from(files).map(file => uploadDocument(file, topic));
-      await Promise.all(uploadPromises);
-
+      // Upload all documents in a single request
+      await uploadDocument(files, topic);
+      
       // Generate assessment
       const data = await generateAssessment({ topic, assessmentType, questionCount });
       setQuestions(data.questions);
