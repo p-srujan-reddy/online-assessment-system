@@ -9,6 +9,7 @@ from .views import (
     ScoreShortAnswersView, 
     ScoreLongAnswersView, 
     ScoreFillInTheBlanksView, 
+    FileUploadView,
 )
 
 urlpatterns = [
