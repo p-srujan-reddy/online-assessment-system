@@ -13,6 +13,7 @@
     "@emotion/styled": "^11.13.0",
     "@mui/material": "^5.16.4",
     "axios": "^1.7.2",
+    "js-cookie": "^3.0.5",
     "next": "14.2.5",
     "next-auth": "^4.24.7",
     "react": "^18",

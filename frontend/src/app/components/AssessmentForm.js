@@ -6,7 +6,8 @@ import { useRouter } from 'next/navigation';
 import { generateAssessment, uploadDocument } from '../../../lib/api';
 import LoadingSpinner from './LoadingSpinner';
 import { useAssessment } from '../context/AssessmentContext';
-import DocumentUpload from './DocumentUpload';
+import Cookies from 'js-cookie';
+
 
 export default function AssessmentForm() {
   const [topic, setTopic] = useState('');
@@ -27,16 +28,24 @@ export default function AssessmentForm() {
     setLoading(true);
     try {
       let assessmentData;
-
+      const csrftoken = Cookies.get('csrftoken');
+  
+      const config = {
+        headers: {
+          'X-CSRFToken': csrftoken,
+          'Content-Type': 'multipart/form-data',
+        }
+      };
+  
       if (file) {
-        // Upload document and generate assessment based on document
-        await uploadDocument(file, topic);  // Pass topic to uploadDocument
+        console.log('File true');
+        const data = await uploadDocument(file, topic);
+        console.log('Document uploaded successfully:', data);
         assessmentData = await generateAssessment({ topic, assessmentType, questionCount, useDocument: true });
       } else {
-        // Generate assessment based on topic only
         assessmentData = await generateAssessment({ topic, assessmentType, questionCount, useDocument: false });
       }
-
+  
       setQuestions(assessmentData.questions);
       setContextAssessmentType(assessmentType);
       setContextTopic(topic);
@@ -48,6 +57,7 @@ export default function AssessmentForm() {
       setLoading(false);
     }
   };
+  
 
   return (
     <div className="max-w-md mx-auto mt-8 p-6 bg-white rounded-lg shadow-md">
