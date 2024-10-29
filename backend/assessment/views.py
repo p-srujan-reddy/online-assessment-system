@@ -12,6 +12,7 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from .models import UploadedFile
 import os
 from django.conf import settings
+from .utils import generate_questions
 
 logger = logging.getLogger(__name__)
 

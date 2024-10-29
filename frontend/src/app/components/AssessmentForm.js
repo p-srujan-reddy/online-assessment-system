@@ -40,6 +40,7 @@ export default function AssessmentForm() {
       setQuestions(data.questions);
       setContextAssessmentType(assessmentType);
       setContextTopic(topic);
+      const assessmentData = { /* define your assessment data here */ };
       setAssessmentData(assessmentData);
       router.push('/questions');
     } catch (error) {
