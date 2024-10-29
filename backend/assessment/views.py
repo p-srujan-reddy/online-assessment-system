@@ -8,6 +8,10 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 import logging
+from rest_framework.parsers import MultiPartParser, FormParser
+from .models import UploadedFile
+import os
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -242,3 +246,22 @@ class ScoreFillInTheBlanksView(APIView):
         total_score = sum(result['score'] for result in results)
         print(f"total_score {total_score}")
         return Response({"total_score": total_score, "results": results}, status=status.HTTP_200_OK)
+
+
+
+class FileUploadView(APIView):
+    parser_classes = (MultiPartParser, FormParser)
+
+    def post(self, request, *args, **kwargs):
+        files = request.FILES.getlist('documents')
+        topic = request.data.get('topic')
+        uploaded_files = []
+        
+        for file in files:
+            uploaded_file = UploadedFile.objects.create(file=file)
+            uploaded_files.append(uploaded_file)
+            file_path = os.path.join(settings.MEDIA_ROOT, uploaded_file.file.name)
+            logger.info(f"File saved to: {file_path}")
+            print(f"File saved to: {file_path}")  # Optional: Print to console
+
+        return Response({'message': 'Files uploaded successfully'}, status=status.HTTP_201_CREATED)
