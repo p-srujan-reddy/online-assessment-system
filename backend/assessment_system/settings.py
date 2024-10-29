@@ -156,5 +156,9 @@ CSRF_TRUSTED_ORIGINS = [
     "https://localhost:3000",
 ]
 
+CSRF_COOKIE_NAME = "csrftoken"
+CSRF_HEADER_NAME = "X-CSRFToken"
+
+
 GOOGLE_GENERATIVE_AI_API_KEY = os.getenv('GOOGLE_API_KEY')
 GOOGLE_GENERATIVE_AI_MODEL = 'gemini-1.5-flash-latest'

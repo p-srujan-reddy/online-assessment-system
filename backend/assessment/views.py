@@ -21,6 +21,7 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 
 
+
 logger = logging.getLogger(__name__)
 
 # Utility function to make API requests
@@ -107,7 +108,6 @@ class GenerateAssessmentView(APIView):
 
         try:
             if use_document:
-                # Retrieve the most recent document for this topic
                 collection = process_document(f"{topic}_collection")
                 questions = generate_questions(topic, assessment_type, collection, question_count)
             else:
@@ -231,28 +231,31 @@ class ScoreFillInTheBlanksView(APIView):
         print(f"total_score {total_score}")
         return Response({"total_score": total_score, "results": results}, status=status.HTTP_200_OK)
 
-
-class UploadDocumentView(APIView):
-    @method_decorator(csrf_exempt)
+class UploadDocumentView(View):
+    @method_decorator(csrf_exempt, name='dispatch')
     def post(self, request, *args, **kwargs):
-        file = request.FILES.get('document')
-        topic = request.POST.get('topic')
-
-        if not file:
-            return JsonResponse({'error': 'No document uploaded'}, status=400)
-        if not topic:
-            return JsonResponse({'error': 'Topic is required'}, status=400)
-
         try:
-            # Save the file
-            file_path = default_storage.save(file.name, file)
-            file_url = default_storage.url(file_path)
-            
-            # Process the document
-            collection = process_document(file_url, topic)
-            
-            return JsonResponse({'message': 'Document uploaded and processed successfully'})
-        except Exception as e:
-            logger.error(f"Error processing document: {str(e)}")
-            return JsonResponse({'error': 'Failed to process document'}, status=500)
+            token = request.META.get('HTTP_X_CSRFTOKEN')
+            logger.debug(f'CSRF Token: {token}')
+            file = request.FILES.get('document')
+            topic = request.POST.get('topic')
 
+            if not file:
+                return JsonResponse({'error': 'No file uploaded'}, status=400)
+
+            if not topic:
+                return JsonResponse({'error': 'Topic is required'}, status=400)
+
+            # Save the file
+            file_path = os.path.join(settings.MEDIA_ROOT, file.name)
+            with open(file_path, 'wb+') as destination:
+                for chunk in file.chunks():
+                    destination.write(chunk)
+
+            # Process the document
+            collection = process_document(file_path, topic)
+            return JsonResponse({'message': 'File uploaded successfully', 'collection': collection}, status=200)
+
+        except Exception as e:
+            logger.error(f"Error during file upload: {str(e)}")
+            return JsonResponse({'error': str(e)}, status=500)
