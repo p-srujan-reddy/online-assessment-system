@@ -46,8 +46,8 @@ VECTOR_DIMENSION = 768
 VECTOR_METRIC = "cosine"
 NAMESPACE = "documents"  # Namespace for document embeddings
 
-if INDEX_NAME in pc.list_indexes().names():
-    pc.delete_index(INDEX_NAME)
+# if INDEX_NAME in pc.list_indexes().names():
+#     pc.delete_index(INDEX_NAME)
 
 def init_pinecone():
     try:
@@ -175,6 +175,7 @@ async def process_answer(answer: JsonDict, topic: str) -> JsonDict:
         correct_answer = answer.get("correct_answer")
 
         if not all([question_type, question_text, user_answer, correct_answer]):
+            logger.warning("Missing fields in answer")
             return {"score": 0, "is_correct": False, "verified_by_llm": False}
 
         prompt = (
@@ -188,6 +189,7 @@ async def process_answer(answer: JsonDict, topic: str) -> JsonDict:
         )
 
         score_text = await make_api_request(prompt)
+        logger.info(f"Score Text: {score_text}")
         if score_text is not None:
             try:
                 score = float(score_text)
@@ -342,6 +344,8 @@ class GenerateAssessmentView(APIView):
 
             questions = parse_generated_text(generated_text, assessment_type)
             
+            print("Questions: ", questions)
+            
             return Response(
                 {
                     "questions": questions,
@@ -364,10 +368,12 @@ class ScoreAnswersView(APIView):
     @async_view
     async def post(self, request: HttpRequest) -> Response:
         try:
+            logger.info("ScoreAnswersView called")
             answers = request.data.get("answers")
             topic = request.data.get("topic")
 
             if not answers or not topic:
+                logger.warning("Missing 'answers' or 'topic' in request")
                 return Response(
                     {"error": "Missing required fields"},
                     status=status.HTTP_400_BAD_REQUEST,
@@ -377,6 +383,8 @@ class ScoreAnswersView(APIView):
             results = await asyncio.gather(*tasks)
             total_score = sum(result["score"] for result in results)
 
+            logger.info(f"Total Score: {total_score}")
+
             return Response(
                 {"total_score": total_score, "results": results},
                 status=status.HTTP_200_OK,
@@ -385,9 +393,10 @@ class ScoreAnswersView(APIView):
         except Exception as e:
             logger.error(f"Error in ScoreAnswersView: {e}")
             return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {"error": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+            
 class FileUploadView(APIView):
     parser_classes = (MultiPartParser, FormParser)
 
