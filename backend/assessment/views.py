@@ -12,7 +12,6 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from .models import UploadedFile
 import os
 from django.conf import settings
-from .utils import generate_questions
 
 logger = logging.getLogger(__name__)
 
@@ -92,26 +91,50 @@ class GenerateAssessmentView(APIView):
         topic = request.data.get('topic')
         assessment_type = request.data.get('assessmentType')
         question_count = request.data.get('questionCount')
-        use_document = request.data.get('useDocument', False)
 
         if not all([topic, assessment_type, question_count]):
             logger.error("Missing required fields in the request data")
             return Response({"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            if use_document:
-                collection = process_document(f"{topic}_collection")
-                questions = generate_questions(topic, assessment_type, collection, question_count)
-            else:
-                questions = generate_questions(topic, assessment_type, question_count=question_count)
+        # Create the prompt template
+        if assessment_type == 'mcq':
+            prompt = (
+                f"Generate {question_count} {assessment_type} questions about {topic} in JSON format. "
+                f"Each question should have a 'text' field for the question, an 'options' field for the answer options, "
+                f"and a 'correct_answer' field for the correct answer. If it's a multiple-choice question, 'options' should include the correct answer and 3 incorrect options."
+            )
+        elif assessment_type == 'true_false':
+            prompt = (
+                f"Generate {question_count} {assessment_type} questions about {topic} in JSON format. "
+                f"Each question should have a 'text' field for the question and a 'correct_answer' field which should be 'True' or 'False'."
+            )
+        elif assessment_type == 'fill_in_blank':
+            prompt = (
+                f"Generate {question_count} {assessment_type} questions about {topic} in JSON format. "
+                f"Each question should have a 'text' field for the question with blanks represented by underscores and a 'correct_answer' field with the correct answer to fill in the blanks."
+            )
+        elif assessment_type == 'short_answer':
+            prompt = (
+                f"Generate {question_count} short answer questions about {topic} in JSON format. "
+                f"Each question should have a 'text' field for the question and a 'correct_answer' field for the correct answer."
+            )
+        elif assessment_type == 'long_answer':
+            prompt = (
+                f"Generate {question_count} long answer questions about {topic} in JSON format. "
+                f"Each question should have a 'text' field for the question and a 'correct_answer' field for the correct answer."
+            )
+        else:
+            logger.error(f"Unsupported assessment type: {assessment_type}")
+            return Response({"error": "Unsupported assessment type"}, status=status.HTTP_400_BAD_REQUEST)
 
+        generated_text = make_api_request(prompt)
+        print(f"generated_text {generated_text}")
+        if generated_text is not None:
+            questions = parse_generated_text(generated_text, assessment_type)
+            print(f"questions {questions}")
             return Response({"questions": questions, "assessmentType": assessment_type}, status=status.HTTP_200_OK)
-        except ValueError as e:
-            logger.error(f"Invalid assessment type: {str(e)}")
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.error(f"Error generating assessment: {str(e)}")
-            return Response({"error": "Failed to generate assessment"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        else:
+            return Response({"error": "API request failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class ScoreShortAnswersView(APIView):
     def post(self, request):
@@ -195,6 +218,7 @@ class ScoreFillInTheBlanksView(APIView):
                         )
 
                 score_text = make_api_request(prompt)
+                print(f"score_text {score_text}")
                 if score_text is not None:
                     try:
                         score = float(score_text)
@@ -222,7 +246,6 @@ class ScoreFillInTheBlanksView(APIView):
         total_score = sum(result['score'] for result in results)
         print(f"total_score {total_score}")
         return Response({"total_score": total_score, "results": results}, status=status.HTTP_200_OK)
-
 
 
 class FileUploadView(APIView):
