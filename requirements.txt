@@ -47,3 +47,8 @@ python-docx
 openpyxl
 python-pptx
 unstructured
+pdfminer.six
+pi_heif
+unstructured_inference
+unstructured_pytesseract
+pytesseract

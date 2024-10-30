@@ -158,6 +158,7 @@ GOOGLE_GENERATIVE_AI_MODEL = "gemini-1.5-flash-latest"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 
+CHROMA_DB_DIR = os.path.join(BASE_DIR, "chroma_db")
 
 LOGGING = {
     'version': 1,
@@ -171,4 +172,14 @@ LOGGING = {
         'handlers': ['console'],
         'level': 'ERROR',  # Set to ERROR to reduce verbosity
     },
+}
+
+# settings.py
+ASGI_APPLICATION = 'your_project.asgi.application'
+
+# If you're using channels
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer'
+    }
 }
