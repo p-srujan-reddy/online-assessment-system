@@ -29,22 +29,15 @@ const QuestionList = () => {
     e.preventDefault();
     let calculatedScore = 0;
     const answersToScore = [];
-  
+
     questions.forEach((question, questionIndex) => {
       const userAnswer = selectedAnswers[questionIndex] || '';
       const correctAnswer = question.correct_answer;
       let isCorrect = false;
-  
+
       if (question.type === 'mcq' || question.type === 'true_false') {
         isCorrect = userAnswer === correctAnswer;
         calculatedScore += isCorrect ? 1 : 0;
-      } else if (question.type === 'fill_in_blank') {
-        answersToScore.push({
-          type: question.type,
-          text: question.text,
-          user_answer: userAnswer,
-          correct_answer: correctAnswer,
-        });
       } else {
         answersToScore.push({
           type: question.type,
@@ -53,12 +46,12 @@ const QuestionList = () => {
           correct_answer: correctAnswer,
         });
       }
-  
+
       results[questionIndex] = { is_correct: isCorrect };
     });
-  
+
     setScore(calculatedScore);
-  
+
     if (answersToScore.length > 0) {
       try {
         const fillInBlankAnswers = answersToScore.filter(answer => answer.type === 'fill_in_blank');
@@ -66,7 +59,7 @@ const QuestionList = () => {
 
         if (fillInBlankAnswers.length > 0) {
           const fillInBlankResult = await scoreFillInTheBlanks({ answers: fillInBlankAnswers, topic });
-          fillInBlankResult.results.forEach((res, idx) => {
+          fillInBlankResult.detailed_results.forEach((res, idx) => {
             const index = questions.findIndex(q => q.text === fillInBlankAnswers[idx].text);
             results[index] = res;
             calculatedScore += res.is_correct ? 1 : 0;
@@ -75,7 +68,7 @@ const QuestionList = () => {
 
         if (otherAnswers.length > 0) {
           const result = await scoreShortAnswers({ answers: otherAnswers, topic });
-          result.results.forEach((res, idx) => {
+          result.detailed_results.forEach((res, idx) => {
             const index = questions.findIndex(q => q.text === otherAnswers[idx].text);
             results[index] = res;
             calculatedScore += res.is_correct ? 1 : 0;
@@ -87,7 +80,7 @@ const QuestionList = () => {
         console.error('Error scoring answers:', error);
       }
     }
-  
+
     setResults(results);
     setShowResults(true);
   };
@@ -131,6 +124,7 @@ const QuestionList = () => {
                 selectedAnswer={selectedAnswers[questionIndex]}
                 showResults={showResults}
                 isCorrect={results[questionIndex]?.is_correct}
+                explanation={results[questionIndex]?.explanation} // Added explanation prop
               />
             )}
             {question.type === 'short_answer' && (
@@ -142,6 +136,7 @@ const QuestionList = () => {
                 showResults={showResults}
                 isCorrect={results[questionIndex]?.is_correct}
                 verifiedByLLM={results[questionIndex]?.verified_by_llm}
+                explanation={results[questionIndex]?.explanation} // Added explanation prop
               />
             )}
             {question.type === 'long_answer' && (
@@ -153,6 +148,7 @@ const QuestionList = () => {
                 showResults={showResults}
                 isCorrect={results[questionIndex]?.is_correct}
                 verifiedByLLM={results[questionIndex]?.verified_by_llm}
+                explanation={results[questionIndex]?.explanation} // Added explanation prop
               />
             )}
           </div>

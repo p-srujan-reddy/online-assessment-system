@@ -157,15 +157,63 @@ def parse_generated_text(
         if generated_text.startswith("```") and generated_text.endswith("```"):
             generated_text = generated_text.strip("```json").strip()
 
-        questions = json.loads(generated_text)
+        parsed_json = json.loads(generated_text)
+        
+        if isinstance(parsed_json, list):
+            questions = parsed_json
+        elif isinstance(parsed_json, dict):
+            questions = [parsed_json]
+        else:
+            logger.error("Parsed JSON is neither a list nor a dict")
+            return []
+
         for question in questions:
-            question["type"] = assessment_type
+            if isinstance(question, dict):
+                question["type"] = assessment_type
+            else:
+                logger.error("Question is not a dict")
+                return []
         return questions
     except json.JSONDecodeError as e:
         logger.error(f"JSON decode error: {e}")
         return []
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        return []
 
+def parse_generated_evaluation_response_text(
+    generated_text: str
+) -> JsonDict:
+    """Parse generated text into structured question format"""
+    try:
+        if generated_text.startswith("```") and generated_text.endswith("```"):
+            generated_text = generated_text.strip("```json").strip()
 
+        parsed_json = json.loads(generated_text)
+        
+        if isinstance(parsed_json, list):
+            questions = parsed_json[0]
+        elif isinstance(parsed_json, dict):
+            questions = parsed_json
+        else:
+            logger.error("Parsed JSON is neither a list nor a dict")
+            return {}
+        
+        return questions
+        # for question in questions:
+        #     if isinstance(question, dict):
+        #         question["type"] = assessment_type
+        #     else:
+        #         logger.error("Question is not a dict")
+        #         return []
+        # return questions
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode error: {e}")
+        return {}
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        return {}
+    
 async def process_answer(answer: JsonDict, topic: str) -> JsonDict:
     """Process and score individual answers"""
     try:
@@ -363,7 +411,7 @@ class GenerateAssessmentView(APIView):
 
 
 class ScoreAnswersView(APIView):
-    """View for scoring assessment answers"""
+    """View for scoring assessment answers using RAG context"""
 
     @async_view
     async def post(self, request: HttpRequest) -> Response:
@@ -379,16 +427,121 @@ class ScoreAnswersView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            tasks = [process_answer(answer, topic) for answer in answers]
-            results = await asyncio.gather(*tasks)
-            total_score = sum(result["score"] for result in results)
+            # Generate embedding for the topic
+            topic_embedding = await generate_gemini_embeddings(topic)
+            if not topic_embedding:
+                return Response(
+                    {"error": "Failed to generate topic embeddings"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
 
-            logger.info(f"Total Score: {total_score}")
-
-            return Response(
-                {"total_score": total_score, "results": results},
-                status=status.HTTP_200_OK,
+            # Query Pinecone for relevant context
+            index = pc.Index(INDEX_NAME)
+            query_response = await sync_to_async(index.query)(
+                vector=topic_embedding,
+                top_k=3,
+                namespace=NAMESPACE,
+                include_metadata=True
             )
+
+            # Extract relevant context
+            context = " ".join([
+                match['metadata']['text']
+                for match in query_response['matches']
+            ]) if query_response['matches'] else ""
+
+            async def process_answer_with_context(answer: JsonDict, topic: str, context: str) -> JsonDict:
+                """Process and score individual answers with RAG context"""
+                try:
+                    question_type = answer.get("type")
+                    question_text = answer.get("text")
+                    user_answer = answer.get("user_answer")
+                    correct_answer = answer.get("correct_answer")
+
+                    if not all([question_type, question_text, user_answer, correct_answer]):
+                        logger.warning("Missing fields in answer")
+                        return {"score": 0, "is_correct": False, "verified_by_llm": False}
+
+                    # Enhanced prompt using RAG context
+                    prompt = (
+                        f"Based on the following context and information, evaluate the answer's correctness:\n\n"
+                        f"Context: {context}\n\n"
+                        f"Topic: {topic}\n"
+                        f"Question Type: {question_type}\n"
+                        f"Question: {question_text}\n"
+                        f"Correct Answer: {correct_answer}\n"
+                        f"User's Answer: {user_answer}\n\n"
+                        f"Assessment Instructions:\n"
+                        f"1. Compare the user's answer with both the correct answer and the context provided\n"
+                        f"2. For objective questions (MCQ, True/False), ensure exact matching\n"
+                        f"3. For subjective questions (Short/Long Answer), evaluate based on key concepts present in the context\n"
+                        f"4. Consider partial credit for answers that demonstrate understanding but may not be complete\n\n"
+                        f"Return a JSON object with the following fields:\n"
+                        f"- score: probability between 0 and 1\n"
+                        f"- explanation: brief explanation of the scoring\n"
+                        f"- key_matches: list of key concepts correctly mentioned"
+                    )
+
+                    response_text = await make_api_request(prompt)
+                    # print("Response Text: ", response_text)
+                    if response_text is None:
+                        return {"score": 0, "is_correct": False, "verified_by_llm": False}
+
+                    try:
+                        try:
+                            response = parse_generated_evaluation_response_text(response_text)
+                            # print("Response: ", response)
+                        except Exception as e:
+                            logger.error(f"Error decoding LLM response: {e}")
+                            
+                        
+                        score = float(response.get("score", 0))
+                        print("Score: ", score)
+                        is_correct = score >= 0.7  # Adjusted threshold with context
+                        feedback =  {
+                            "score": score,
+                            "is_correct": is_correct,
+                            "verified_by_llm": True,
+                            "explanation": response.get("explanation", ""),
+                            "key_matches": response.get("key_matches", []),
+                            "confidence": score
+                        }
+                        print("Feedback: ", feedback)
+                        return feedback
+                    except Exception as e:
+                        logger.error(f"Error processing LLM response: {e}")
+                        return {"score": 0, "is_correct": False, "verified_by_llm": False, "explanation": "Error processing LLM response"}
+
+                except Exception as e:
+                    logger.error(f"Error processing answer: {e}")
+                    return {"score": 0, "is_correct": False, "verified_by_llm": False, "explanation": str(e)}
+
+            # Process all answers with context
+            tasks = [process_answer_with_context(answer, topic, context) for answer in answers]
+            results = await asyncio.gather(*tasks)
+            
+            print("Results: ", results)
+            # Calculate weighted score based on confidence
+            total_score = sum(result["score"] for result in results)
+            average_score = total_score / len(results) if results else 0
+            
+            # Aggregate feedback
+            feedback = {
+                "overall_score": average_score,
+                "confidence": sum(result.get("confidence", 0) for result in results) / len(results),
+                "detailed_results": results,
+                "summary": {
+                    "total_questions": len(results),
+                    "correct_answers": sum(1 for result in results if result["is_correct"]),
+                    "needs_improvement": sum(1 for result in results if not result["is_correct"])
+                }
+            }
+            
+            print(f"Final Feedback: {feedback}")
+
+            logger.info(f"Scoring completed with average score: {average_score}")
+
+            return Response(feedback, status=status.HTTP_200_OK)
 
         except Exception as e:
             logger.error(f"Error in ScoreAnswersView: {e}")

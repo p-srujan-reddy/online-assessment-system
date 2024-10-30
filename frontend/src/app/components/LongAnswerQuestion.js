@@ -1,7 +1,7 @@
 // src/app/components/LongAnswerQuestion.js
 import React, { useRef, useEffect } from 'react';
 
-const LongAnswerQuestion = ({ question, questionIndex, handleInputChange, selectedAnswer, showResults, isCorrect, verifiedByLLM }) => {
+const LongAnswerQuestion = ({ question, questionIndex, handleInputChange, selectedAnswer, showResults, isCorrect, verifiedByLLM, explanation }) => {
   const textareaRef = useRef(null);
 
   // Adjust textarea height based on content
@@ -30,6 +30,7 @@ const LongAnswerQuestion = ({ question, questionIndex, handleInputChange, select
           </p>
           <p className="text-lg font-small">{question.correct_answer}</p>
           <p className="text-sm text-gray-600">{verifiedByLLM ? 'Verified by LLM' : 'Not verified by LLM'}</p>
+          <p className="text-sm text-gray-700 mt-2">{explanation}</p> {/* Display explanation */}
         </div>
       )}
     </div>

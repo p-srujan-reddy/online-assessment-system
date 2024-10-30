@@ -1,6 +1,7 @@
+// src/app/components/FillInBlankQuestion.js
 import React from 'react';
 
-const FillInBlankQuestion = ({ question, questionIndex, handleInputChange, selectedAnswer = [], showResults, isCorrect = [] }) => {
+const FillInBlankQuestion = ({ question, questionIndex, handleInputChange, selectedAnswer = [], showResults, isCorrect = [], explanation }) => {
   // Determine the style of each input field based on correctness
   const getInputStyle = (index) => {
     if (!showResults) return '';
@@ -35,6 +36,9 @@ const FillInBlankQuestion = ({ question, questionIndex, handleInputChange, selec
     }
   });
 
+  // Ensure isCorrect is an array before using .every
+  const allCorrect = Array.isArray(isCorrect) ? isCorrect.every(Boolean) : isCorrect;
+
   return (
     <div className="mb-4 p-4 border border-gray-300 rounded-md">
       <p className="mb-2 font-semibold">
@@ -42,9 +46,11 @@ const FillInBlankQuestion = ({ question, questionIndex, handleInputChange, selec
       </p>
       {showResults && (
         <div className="mt-2">
-          <p className="text-sm text-gray-600">
-            Correct answers: {question.correct_answer}
+          <p className={`text-sm ${allCorrect ? 'text-green-600' : 'text-red-600'}`}>
+            {allCorrect ? 'All correct!' : 'Some answers are incorrect!'}
           </p>
+          <p className="text-lg font-small">Correct answers: {question.correct_answer}</p>
+          <p className="text-sm text-gray-600">{explanation}</p> {/* Display explanation */}
         </div>
       )}
     </div>
