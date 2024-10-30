@@ -157,3 +157,18 @@ GOOGLE_GENERATIVE_AI_MODEL = "gemini-1.5-flash-latest"
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = os.path.join(BASE_DIR, "media")
+
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'ERROR',  # Set to ERROR to reduce verbosity
+    },
+}

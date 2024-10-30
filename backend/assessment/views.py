@@ -12,55 +12,71 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from .models import UploadedFile
 import os
 from django.conf import settings
+from langchain.document_loaders import (
+    UnstructuredPDFLoader,
+    UnstructuredWordDocumentLoader,
+    UnstructuredExcelLoader,
+    UnstructuredPPTXLoader,
+    CSVLoader,
+)
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import GooglePalmEmbeddings
+import chromadb
+from asgiref.sync import sync_to_async
+from functools import lru_cache
+
 
 logger = logging.getLogger(__name__)
 
+
 # Utility function to make API requests
+@lru_cache(maxsize=128)
 def make_api_request(prompt):
-    payload = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": prompt}
-                ]
-            }
-        ]
-    }
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
     try:
         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.GOOGLE_GENERATIVE_AI_MODEL}:generateContent"
         headers = {"Content-Type": "application/json"}
-        response = requests.post(api_url, json=payload, headers=headers, params={"key": settings.GOOGLE_GENERATIVE_AI_API_KEY})
+        response = requests.post(
+            api_url,
+            json=payload,
+            headers=headers,
+            params={"key": settings.GOOGLE_GENERATIVE_AI_API_KEY},
+        )
 
         if response.status_code == 200:
             result = response.json()
-            return result['candidates'][0]['content']['parts'][0]['text'].strip()
+            return result["candidates"][0]["content"]["parts"][0]["text"].strip()
         else:
-            logger.error(f"API request failed with status code {response.status_code}: {response.text}")
+            logger.error(
+                f"API request failed with status code {response.status_code}: {response.text}"
+            )
             return None
     except Exception as e:
         logger.error(f"An error occurred: {str(e)}")
         return None
+
 
 # Utility function to parse generated text
 def parse_generated_text(generated_text, assessment_type):
     try:
         if generated_text.startswith("```") and generated_text.endswith("```"):
             generated_text = generated_text.strip("```json").strip()
-        
+
         questions = json.loads(generated_text)
         for question in questions:
-            question['type'] = assessment_type  # Add the type to each question
+            question["type"] = assessment_type  # Add the type to each question
         return questions
     except json.JSONDecodeError as e:
         logger.error(f"JSON decode error: {str(e)}")
         return []
 
+
 # Utility function to process individual answers
 def process_answer(answer, topic):
-    question_type = answer.get('type')
-    question_text = answer.get('text')
-    user_answer = answer.get('user_answer')
-    correct_answer = answer.get('correct_answer')
+    question_type = answer.get("type")
+    question_text = answer.get("text")
+    user_answer = answer.get("user_answer")
+    correct_answer = answer.get("correct_answer")
 
     if not all([question_type, question_text, user_answer, correct_answer]):
         return {"score": 0, "is_correct": False, "verified_by_llm": False}
@@ -81,141 +97,281 @@ def process_answer(answer, topic):
             score = float(score_text)
             is_correct = score >= 0.5
             rounded_score = 1 if is_correct else 0
-            return {"score": rounded_score, "is_correct": is_correct, "verified_by_llm": True}
+            return {
+                "score": rounded_score,
+                "is_correct": is_correct,
+                "verified_by_llm": True,
+            }
         except ValueError:
             logger.error(f"Failed to convert score from response: {score_text}")
     return {"score": 0, "is_correct": False, "verified_by_llm": False}
 
+
+def upload_document(request):
+    if request.method == "POST":
+        documents = []
+        for file in request.FILES.getlist("documents"):
+            file_name = file.name
+            file_type = file.content_type
+
+            if file_type == "application/pdf":
+                loader = UnstructuredPDFLoader(file)
+            elif file_type in [
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "application/msword",
+            ]:
+                loader = UnstructuredWordDocumentLoader(file)
+            elif (
+                file_type
+                == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ):
+                loader = UnstructuredExcelLoader(file)
+            elif (
+                file_type
+                == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            ):
+                loader = UnstructuredPPTXLoader(file)
+            elif file_type == "text/csv":
+                loader = CSVLoader(file)
+            else:
+                continue  # Unsupported file type
+
+            documents.extend(loader.load())
+        # Proceed to process the documents
+
+
+def process_documents(documents):
+    # Split documents into chunks
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    chunks = text_splitter.split_documents(documents)
+
+    # Prepare texts for embedding
+    texts = [chunk.page_content for chunk in chunks]
+
+    # Initialize embeddings and ChromaDB
+    embeddings = GooglePalmEmbeddings()
+    client = chromadb.Client(
+        settings=chromadb.config.Settings(
+            chroma_db_impl="duckdb+parquet",
+            persist_directory="online-assessment-system/backend/chroma_db",
+            anonymized_telemetry=False,
+        )
+    )
+    collection = client.get_or_create_collection(name="documents")
+
+    # Embed texts in batches
+    embeddings_list = embeddings.embed_documents(texts)
+
+    # Add embeddings to ChromaDB
+    collection.add(documents=texts, embeddings=embeddings_list)
+
+
 class GenerateAssessmentView(APIView):
-    def post(self, request):
-        topic = request.data.get('topic')
-        assessment_type = request.data.get('assessmentType')
-        question_count = request.data.get('questionCount')
+    async def post(self, request):
+        topic = request.data.get("topic")
+        assessment_type = request.data.get("assessmentType")
+        question_count = request.data.get("questionCount")
+
+        # Retrieve relevant documents from ChromaDB
+        embeddings = GooglePalmEmbeddings()
+        client = chromadb.Client(
+            settings=chromadb.config.Settings(
+                chroma_db_impl="duckdb+parquet",
+                persist_directory="online-assessment-system/backend/chroma_db",
+                anonymized_telemetry=False,
+            )
+        )
+        collection = client.get_collection(name="documents")
+
+        query_embedding = embeddings.embed_query(topic)
+        results = collection.query(
+            query_embeddings=[query_embedding], n_results=3, include=["documents"]
+        )
+
+        context = " ".join(results["documents"])
 
         if not all([topic, assessment_type, question_count]):
             logger.error("Missing required fields in the request data")
-            return Response({"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         # Create the prompt template
-        if assessment_type == 'mcq':
+        if assessment_type == "mcq":
             prompt = (
                 f"Generate {question_count} {assessment_type} questions about {topic} in JSON format. "
+                f"Consider and use the following context to generate the questions and answers required on the {topic}: \n {context}"
                 f"Each question should have a 'text' field for the question, an 'options' field for the answer options, "
                 f"and a 'correct_answer' field for the correct answer. If it's a multiple-choice question, 'options' should include the correct answer and 3 incorrect options."
             )
-        elif assessment_type == 'true_false':
+        elif assessment_type == "true_false":
             prompt = (
                 f"Generate {question_count} {assessment_type} questions about {topic} in JSON format. "
+                f"Consider and use the following context to generate the questions and answers required on the {topic}: \n {context}"
                 f"Each question should have a 'text' field for the question and a 'correct_answer' field which should be 'True' or 'False'."
             )
-        elif assessment_type == 'fill_in_blank':
+        elif assessment_type == "fill_in_blank":
             prompt = (
                 f"Generate {question_count} {assessment_type} questions about {topic} in JSON format. "
+                f"Consider and use the following context to generate the questions and answers required on the {topic}: \n {context}"
                 f"Each question should have a 'text' field for the question with blanks represented by underscores and a 'correct_answer' field with the correct answer to fill in the blanks."
             )
-        elif assessment_type == 'short_answer':
+        elif assessment_type == "short_answer":
             prompt = (
                 f"Generate {question_count} short answer questions about {topic} in JSON format. "
+                f"Consider and use the following context to generate the questions and answers required on the {topic}: \n {context}"
                 f"Each question should have a 'text' field for the question and a 'correct_answer' field for the correct answer."
             )
-        elif assessment_type == 'long_answer':
+        elif assessment_type == "long_answer":
             prompt = (
                 f"Generate {question_count} long answer questions about {topic} in JSON format. "
+                f"Consider and use the following context to generate the questions and answers required on the {topic}: \n {context}"
                 f"Each question should have a 'text' field for the question and a 'correct_answer' field for the correct answer."
             )
         else:
             logger.error(f"Unsupported assessment type: {assessment_type}")
-            return Response({"error": "Unsupported assessment type"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Unsupported assessment type"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         generated_text = make_api_request(prompt)
         print(f"generated_text {generated_text}")
         if generated_text is not None:
             questions = parse_generated_text(generated_text, assessment_type)
             print(f"questions {questions}")
-            return Response({"questions": questions, "assessmentType": assessment_type}, status=status.HTTP_200_OK)
+            return Response(
+                {"questions": questions, "assessmentType": assessment_type},
+                status=status.HTTP_200_OK,
+            )
         else:
-            return Response({"error": "API request failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {"error": "API request failed"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
 
 class ScoreShortAnswersView(APIView):
     def post(self, request):
-        answers = request.data.get('answers')
-        topic = request.data.get('topic')
-        
+        answers = request.data.get("answers")
+        topic = request.data.get("topic")
+
         logger.debug(f"Received answers: {answers}")
         logger.debug(f"Received topic: {topic}")
 
         if not answers or not topic:
             logger.error("Missing required fields in the request data")
-            return Response({"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         results = []
 
         with ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_answer = {executor.submit(process_answer, answer, topic): answer for answer in answers}
+            future_to_answer = {
+                executor.submit(process_answer, answer, topic): answer
+                for answer in answers
+            }
             for future in as_completed(future_to_answer):
                 results.append(future.result())
 
-        total_score = sum(result['score'] for result in results)
-        return Response({"total_score": total_score, "results": results}, status=status.HTTP_200_OK)
+        total_score = sum(result["score"] for result in results)
+        return Response(
+            {"total_score": total_score, "results": results}, status=status.HTTP_200_OK
+        )
+
 
 class ScoreLongAnswersView(APIView):
     def post(self, request):
-        answers = request.data.get('answers')
-        topic = request.data.get('topic')
-        
+        answers = request.data.get("answers")
+        topic = request.data.get("topic")
+
         logger.debug(f"Received answers: {answers}")
         logger.debug(f"Received topic: {topic}")
 
         if not answers or not topic:
             logger.error("Missing required fields in the request data")
-            return Response({"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         results = []
 
         with ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_answer = {executor.submit(process_answer, answer, topic): answer for answer in answers}
+            future_to_answer = {
+                executor.submit(process_answer, answer, topic): answer
+                for answer in answers
+            }
             for future in as_completed(future_to_answer):
                 results.append(future.result())
 
-        total_score = sum(result['score'] for result in results)
-        return Response({"total_score": total_score, "results": results}, status=status.HTTP_200_OK)
-    
+        total_score = sum(result["score"] for result in results)
+        return Response(
+            {"total_score": total_score, "results": results}, status=status.HTTP_200_OK
+        )
+
+
 class ScoreFillInTheBlanksView(APIView):
     def post(self, request):
-        answers = request.data.get('answers')
-        topic = request.data.get('topic')
-        
+        answers = request.data.get("answers")
+        topic = request.data.get("topic")
+
         logger.debug(f"Received answers: {answers}")
         logger.debug(f"Received topic: {topic}")
 
         if not answers or not topic:
             logger.error("Missing required fields in the request data")
-            return Response({"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         results = []
 
         def process_fill_in_the_blank_answer(answer, topic):
-            question_text = answer.get('text')
-            user_answers = answer.get('user_answer', [])
-            correct_answers = answer.get('correct_answer', '').split(', ')
-            
+            question_text = answer.get("text")
+            user_answers = answer.get("user_answer", [])
+            correct_answers = answer.get("correct_answer", "").split(", ")
+
+            # Retrieve relevant documents
+            embeddings = GooglePalmEmbeddings()
+            client = chromadb.Client(
+                settings=chromadb.config.Settings(
+                    chroma_db_impl="duckdb+parquet",
+                    persist_directory="online-assessment-system/backend/chroma_db",
+                    anonymized_telemetry=False,
+                )
+            )
+            collection = client.get_collection(name="documents")
+
+            query_embedding = embeddings.embed_query(topic)
+            results = collection.query(
+                query_embeddings=[query_embedding], n_results=5, include=["documents"]
+            )
+
+            context = " ".join(results["documents"])
+
             if len(user_answers) != len(correct_answers):
-                return {"score": 0, "is_correct": [False] * len(correct_answers), "verified_by_llm": False}
+                return {
+                    "score": 0,
+                    "is_correct": [False] * len(correct_answers),
+                    "verified_by_llm": False,
+                }
 
             is_correct_list = []
             total_score = 0
 
             for user_answer, correct_answer in zip(user_answers, correct_answers):
                 prompt = (
-                            f"Evaluate the relevance of the following user's answer to the correct answer for a given fill-in-the-blanks question. "
-                            f"Analyze the question context to ensure the user's answer fits appropriately.\n"
-                            f"Topic: {topic}\n"
-                            f"Question Type: fill_in_the_blanks\n"
-                            f"Question: {question_text}\n"
-                            f"Correct Answer: {correct_answer}\n"
-                            f"User's Answer: {user_answer}\n"
-                            f"Provide a probability score between 0 and 1 representing how relevant the user's answer is to the correct answer. Give only the probability score number."
-                        )
+                    f"Evaluate the relevance of the following user's answer to the correct answer for a given fill-in-the-blanks question. "
+                    f"Also Consider the following context of the question to ensure the user's answer fits appropriately: \n{context}"
+                    f"Analyze the question context to ensure the user's answer fits appropriately.\n"
+                    f"Topic: {topic}\n"
+                    f"Question Type: fill_in_the_blanks\n"
+                    f"Question: {question_text}\n"
+                    f"Correct Answer: {correct_answer}\n"
+                    f"User's Answer: {user_answer}\n"
+                    f"Provide a probability score between 0 and 1 representing how relevant the user's answer is to the correct answer. Give only the probability score number."
+                )
 
                 score_text = make_api_request(prompt)
                 print(f"score_text {score_text}")
@@ -227,7 +383,9 @@ class ScoreFillInTheBlanksView(APIView):
                         total_score += rounded_score
                         is_correct_list.append(is_correct)
                     except ValueError:
-                        logger.error(f"Failed to convert score from response: {score_text}")
+                        logger.error(
+                            f"Failed to convert score from response: {score_text}"
+                        )
                         is_correct_list.append(False)
                 else:
                     is_correct_list.append(False)
@@ -235,27 +393,32 @@ class ScoreFillInTheBlanksView(APIView):
             return {
                 "score": total_score,
                 "is_correct": is_correct_list,
-                "verified_by_llm": all(is_correct_list)
+                "verified_by_llm": all(is_correct_list),
             }
 
         with ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_answer = {executor.submit(process_fill_in_the_blank_answer, answer, topic): answer for answer in answers}
+            future_to_answer = {
+                executor.submit(process_fill_in_the_blank_answer, answer, topic): answer
+                for answer in answers
+            }
             for future in as_completed(future_to_answer):
                 results.append(future.result())
 
-        total_score = sum(result['score'] for result in results)
+        total_score = sum(result["score"] for result in results)
         print(f"total_score {total_score}")
-        return Response({"total_score": total_score, "results": results}, status=status.HTTP_200_OK)
+        return Response(
+            {"total_score": total_score, "results": results}, status=status.HTTP_200_OK
+        )
 
 
 class FileUploadView(APIView):
     parser_classes = (MultiPartParser, FormParser)
 
     def post(self, request, *args, **kwargs):
-        files = request.FILES.getlist('documents')
-        topic = request.data.get('topic')
+        files = request.FILES.getlist("documents")
+        topic = request.data.get("topic")
         uploaded_files = []
-        
+
         for file in files:
             uploaded_file = UploadedFile.objects.create(file=file)
             uploaded_files.append(uploaded_file)
@@ -263,4 +426,6 @@ class FileUploadView(APIView):
             logger.info(f"File saved to: {file_path}")
             print(f"File saved to: {file_path}")  # Optional: Print to console
 
-        return Response({'message': 'Files uploaded successfully'}, status=status.HTTP_201_CREATED)
+        return Response(
+            {"message": "Files uploaded successfully"}, status=status.HTTP_201_CREATED
+        )
