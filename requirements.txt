@@ -52,3 +52,4 @@ pi_heif
 unstructured_inference
 unstructured_pytesseract
 pytesseract
+pinecone

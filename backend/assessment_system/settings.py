@@ -152,7 +152,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
 ]
 
 GOOGLE_GENERATIVE_AI_API_KEY = os.getenv("GOOGLE_API_KEY")
-GOOGLE_GENERATIVE_AI_MODEL = "gemini-1.5-flash-latest"
+GOOGLE_GENERATIVE_AI_MODEL = "gemini-1.5-flash-8b"
 
 
 MEDIA_URL = "/media/"

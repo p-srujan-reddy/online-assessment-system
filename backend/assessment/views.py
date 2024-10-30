@@ -42,26 +42,36 @@ pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
 # os.environ["PINECONE_API_KEY"] = os.getenv("PINECONE_API_KEY")
 # pinecone.init(api_key=os.environ["PINECONE_API_KEY"], environment="us-east-1")
 INDEX_NAME = "document-embeddings"
-VECTOR_DIMENSION = 1024
+VECTOR_DIMENSION = 768
 VECTOR_METRIC = "cosine"
 NAMESPACE = "documents"  # Namespace for document embeddings
 
+if INDEX_NAME in pc.list_indexes().names():
+    pc.delete_index(INDEX_NAME)
 
 def init_pinecone():
     try:
-        existing_indexes = pinecone.list_indexes()
+        existing_indexes = pc.list_indexes().names()
         if INDEX_NAME not in existing_indexes:
             pc.create_index(
                 name=INDEX_NAME,
-                dimension=VECTOR_DIMENSION,
+                dimension=VECTOR_DIMENSION,  # This will now create index with correct dimension
                 metric=VECTOR_METRIC,
                 spec=ServerlessSpec(cloud="aws", region="us-east-1"),
             )
             while not pc.describe_index(INDEX_NAME).status['ready']:
                 time.sleep(1)
+        else:
+            # Check if existing index has correct dimension
+            index_info = pc.describe_index(INDEX_NAME)
+            if index_info.dimension != VECTOR_DIMENSION:
+                logger.error(f"Existing index dimension ({index_info.dimension}) does not match required dimension ({VECTOR_DIMENSION})")
+                # You may want to delete and recreate the index here, or handle this case differently
+                raise ValueError("Index dimension mismatch")
     except Exception as e:
         logger.error(f"Error initializing Pinecone index: {e}")
         raise
+
 
 
 init_pinecone()
@@ -87,7 +97,7 @@ def async_view(view_func: Callable) -> Callable:
 async def generate_gemini_embeddings(
     content: Union[str, List[str]],
     title: str = "",
-    model: str = "models/text-embedding-004",
+    model: str = "models/embedding-001",  # Updated to the correct model name
     task_type: str = "retrieval_document",
 ) -> Optional[List[float]]:
     """Generate embeddings using Google's Gemini embedding model"""
@@ -100,14 +110,22 @@ async def generate_gemini_embeddings(
                 result = await sync_to_async(genai.embed_content)(
                     model=model, content=text, task_type=task_type, title=title
                 )
-                embeddings.append(result["embedding"])
+                embedding = result["embedding"]
+                # Verify embedding dimension
+                if len(embedding) != VECTOR_DIMENSION:
+                    raise ValueError(f"Generated embedding dimension {len(embedding)} does not match expected {VECTOR_DIMENSION}")
+                embeddings.append(embedding)
             return embeddings
         else:
             # Process single text
             result = await sync_to_async(genai.embed_content)(
                 model=model, content=content, task_type=task_type, title=title
             )
-            return result["embedding"]
+            embedding = result["embedding"]
+            # Verify embedding dimension
+            if len(embedding) != VECTOR_DIMENSION:
+                raise ValueError(f"Generated embedding dimension {len(embedding)} does not match expected {VECTOR_DIMENSION}")
+            return embedding
     except Exception as e:
         logger.error(f"Error generating embeddings: {e}")
         return None
@@ -200,8 +218,12 @@ async def process_documents(documents: List[Any]) -> None:
         # Generate embeddings for all texts
         embeddings = await generate_gemini_embeddings(texts)
         if not embeddings:
-            logger.error("Failed to generate embeddings")
-            return
+            raise ValueError("Failed to generate embeddings")
+
+        # Verify all embeddings have correct dimension
+        for i, embedding in enumerate(embeddings):
+            if len(embedding) != VECTOR_DIMENSION:
+                raise ValueError(f"Embedding {i} has incorrect dimension: {len(embedding)}")
 
         while not pc.describe_index(INDEX_NAME).status["ready"]:
             time.sleep(1)
@@ -214,7 +236,7 @@ async def process_documents(documents: List[Any]) -> None:
         for i, (text, embedding) in enumerate(zip(texts, embeddings)):
             vectors.append({
                 "id": f"doc_{i}",
-                "values": embedding['values'],
+                "values": embedding,
                 "metadata": {"text": text}
             })
 
@@ -222,10 +244,14 @@ async def process_documents(documents: List[Any]) -> None:
         batch_size = 100
         for i in range(0, len(vectors), batch_size):
             batch = vectors[i:i + batch_size]
-            await sync_to_async(index.upsert)(
-                vectors=batch,
-                namespace=NAMESPACE
-            )
+            try:
+                await sync_to_async(index.upsert)(
+                    vectors=batch,
+                    namespace=NAMESPACE
+                )
+            except Exception as e:
+                logger.error(f"Error upserting batch {i//batch_size}: {e}")
+                raise
 
     except Exception as e:
         logger.error(f"Error processing documents: {e}")
@@ -292,7 +318,7 @@ class GenerateAssessmentView(APIView):
             # Query Pinecone
             index = pc.Index(INDEX_NAME)
             query_response = await sync_to_async(index.query)(
-                vector=topic_embeddings[0]['values'],
+                vector=topic_embeddings[0],
                 top_k=3,
                 namespace=NAMESPACE,
                 include_metadata=True
@@ -315,6 +341,7 @@ class GenerateAssessmentView(APIView):
                 )
 
             questions = parse_generated_text(generated_text, assessment_type)
+            
             return Response(
                 {
                     "questions": questions,
@@ -376,42 +403,57 @@ class FileUploadView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+            # First, verify Pinecone index dimensions
+            index_info = pc.describe_index(INDEX_NAME)
+            if index_info.dimension != VECTOR_DIMENSION:
+                logger.error(f"Index dimension mismatch. Index: {index_info.dimension}, Expected: {VECTOR_DIMENSION}")
+                return Response(
+                    {"error": "Index dimension mismatch. Please recreate the index with correct dimensions."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
             @sync_to_async
             def save_file(file):
                 uploaded_file = UploadedFile.objects.create(file=file)
                 return uploaded_file
 
             # Process files
-            uploaded_files = []
+            processed_files = []
+            failed_files = []
+            
             for file in files:
-                uploaded_file = await save_file(file)
-                uploaded_files.append(uploaded_file)
-                
-                # Load and process document
-                file_path = os.path.join(settings.MEDIA_ROOT, uploaded_file.file.name)
-                loader = None
-                
-                if file.content_type == "application/pdf":
-                    loader = UnstructuredPDFLoader(file_path)
-                elif file.content_type in ["application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
-                    loader = UnstructuredWordDocumentLoader(file_path)
-                elif file.content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-                    loader = UnstructuredExcelLoader(file_path)
-                elif file.content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
-                    loader = UnstructuredPowerPointLoader(file_path)
-                elif file.content_type == "text/csv":
-                    loader = CSVLoader(file_path)
-                else:
-                    logger.warning(f"Unsupported file type: {file.content_type}")
-                    continue
+                try:
+                    uploaded_file = await save_file(file)
+                    file_path = os.path.join(settings.MEDIA_ROOT, uploaded_file.file.name)
+                    
+                    loader = None
+                    if file.content_type == "application/pdf":
+                        loader = UnstructuredPDFLoader(file_path)
+                    elif file.content_type in ["application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
+                        loader = UnstructuredWordDocumentLoader(file_path)
+                    elif file.content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+                        loader = UnstructuredExcelLoader(file_path)
+                    elif file.content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+                        loader = UnstructuredPowerPointLoader(file_path)
+                    elif file.content_type == "text/csv":
+                        loader = CSVLoader(file_path)
+                    else:
+                        failed_files.append({"file": file.name, "error": "Unsupported file type"})
+                        continue
 
-                documents = await sync_to_async(loader.load)()
-                await process_documents(documents)
+                    documents = await sync_to_async(loader.load)()
+                    await process_documents(documents)
+                    processed_files.append(file.name)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing file {file.name}: {e}")
+                    failed_files.append({"file": file.name, "error": str(e)})
 
-            return Response(
-                {"message": "Files uploaded and processed successfully"},
-                status=status.HTTP_201_CREATED
-            )
+            return Response({
+                "message": "File processing completed",
+                "processed_files": processed_files,
+                "failed_files": failed_files
+            }, status=status.HTTP_200_OK if processed_files else status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         except Exception as e:
             logger.error(f"Error in FileUploadView: {e}")
