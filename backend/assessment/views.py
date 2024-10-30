@@ -12,47 +12,59 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from .models import UploadedFile
 import os
 from django.conf import settings
-from langchain.document_loaders import (
+from langchain_community.document_loaders import (
     UnstructuredPDFLoader,
     UnstructuredWordDocumentLoader,
     UnstructuredExcelLoader,
-    UnstructuredPPTXLoader,
+    UnstructuredPowerPointLoader,
     CSVLoader,
 )
+from google import generativeai as genai  # Import the genai library
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import GooglePalmEmbeddings
 import chromadb
 from asgiref.sync import sync_to_async
-from functools import lru_cache
-
+import asyncio
 
 logger = logging.getLogger(__name__)
+os.environ["GEMINI_API_KEY"] = os.getenv("GOOGLE_API_KEY")
+genai.configure(api_key=os.environ["GEMINI_API_KEY"])
 
 
-# Utility function to make API requests
-@lru_cache(maxsize=128)
-def make_api_request(prompt):
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+async def generate_gemini_embeddings(
+    content, title, model="models/text-embedding-004", task_type="retrieval_document"
+):
     try:
-        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.GOOGLE_GENERATIVE_AI_MODEL}:generateContent"
-        headers = {"Content-Type": "application/json"}
-        response = requests.post(
-            api_url,
-            json=payload,
-            headers=headers,
-            params={"key": settings.GOOGLE_GENERATIVE_AI_API_KEY},
+        model_instance = genai.GenerativeModel(model_name=model)
+        payload = {"content": content, "title": title, "task_type": task_type}
+
+        # Check if embed_content is asynchronous
+        if asyncio.iscoroutinefunction(model_instance.embed_content):
+            response = await model_instance.embed_content(payload)
+        else:
+            response = await sync_to_async(model_instance.embed_content)(payload)
+
+        return response.embedding
+    except Exception as e:
+        logger.error(f"An error occurred: {e}")
+        return None
+
+
+# Utility function to make API requests using genai
+async def make_api_request(prompt):
+    try:
+        model_instance = genai.GenerativeModel(
+            model_name=settings.GOOGLE_GENERATIVE_AI_MODEL
         )
 
-        if response.status_code == 200:
-            result = response.json()
-            return result["candidates"][0]["content"]["parts"][0]["text"].strip()
+        # Check if generate_content is asynchronous
+        if asyncio.iscoroutinefunction(model_instance.generate_content):
+            response = await model_instance.generate_content(prompt)
         else:
-            logger.error(
-                f"API request failed with status code {response.status_code}: {response.text}"
-            )
-            return None
+            response = await sync_to_async(model_instance.generate_content)(prompt)
+
+        return response.text.strip()
     except Exception as e:
-        logger.error(f"An error occurred: {str(e)}")
+        logger.error(f"An error occurred: {e}")
         return None
 
 
@@ -72,7 +84,10 @@ def parse_generated_text(generated_text, assessment_type):
 
 
 # Utility function to process individual answers
-def process_answer(answer, topic):
+# online-assessment-system/backend/assessment/views.py
+
+
+async def process_answer(answer, topic):
     question_type = answer.get("type")
     question_text = answer.get("text")
     user_answer = answer.get("user_answer")
@@ -91,7 +106,7 @@ def process_answer(answer, topic):
         f"Provide a probability score between 0 and 1 representing how relevant the user's answer is to the correct answer. Give only probability score number"
     )
 
-    score_text = make_api_request(prompt)
+    score_text = await make_api_request(prompt)
     if score_text is not None:
         try:
             score = float(score_text)
@@ -130,7 +145,7 @@ def upload_document(request):
                 file_type
                 == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
             ):
-                loader = UnstructuredPPTXLoader(file)
+                loader = UnstructuredPowerPointLoader(file)
             elif file_type == "text/csv":
                 loader = CSVLoader(file)
             else:
@@ -140,7 +155,7 @@ def upload_document(request):
         # Proceed to process the documents
 
 
-def process_documents(documents):
+async def process_documents(documents):
     # Split documents into chunks
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     chunks = text_splitter.split_documents(documents)
@@ -149,7 +164,11 @@ def process_documents(documents):
     texts = [chunk.page_content for chunk in chunks]
 
     # Initialize embeddings and ChromaDB
-    embeddings = GooglePalmEmbeddings()
+    embeddings = await generate_gemini_embeddings(texts, "Retrieval")
+    if not embeddings:
+        logger.error("Failed to generate embeddings for documents")
+        return
+
     client = chromadb.Client(
         settings=chromadb.config.Settings(
             chroma_db_impl="duckdb+parquet",
@@ -157,13 +176,16 @@ def process_documents(documents):
             anonymized_telemetry=False,
         )
     )
-    collection = client.get_or_create_collection(name="documents")
+    collection = await sync_to_async(client.get_or_create_collection)(name="documents")
 
     # Embed texts in batches
-    embeddings_list = embeddings.embed_documents(texts)
+    if asyncio.iscoroutinefunction(embeddings.embed_documents):
+        embeddings_list = await embeddings.embed_documents(texts)
+    else:
+        embeddings_list = await sync_to_async(embeddings.embed_documents)(texts)
 
     # Add embeddings to ChromaDB
-    collection.add(documents=texts, embeddings=embeddings_list)
+    await sync_to_async(collection.add)(documents=texts, embeddings=embeddings_list)
 
 
 class GenerateAssessmentView(APIView):
@@ -171,9 +193,19 @@ class GenerateAssessmentView(APIView):
         topic = request.data.get("topic")
         assessment_type = request.data.get("assessmentType")
         question_count = request.data.get("questionCount")
-
+        if not all([topic, assessment_type, question_count]):
+            logger.error("Missing required fields in the request data")
+            return Response(
+                {"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST
+            )
         # Retrieve relevant documents from ChromaDB
-        embeddings = GooglePalmEmbeddings()
+        embeddings = await generate_gemini_embeddings(topic, "Retrieval")
+        if not embeddings:
+            return Response(
+                {"error": "Failed to generate embeddings"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
         client = chromadb.Client(
             settings=chromadb.config.Settings(
                 chroma_db_impl="duckdb+parquet",
@@ -181,20 +213,19 @@ class GenerateAssessmentView(APIView):
                 anonymized_telemetry=False,
             )
         )
-        collection = client.get_collection(name="documents")
+        collection = await sync_to_async(client.get_collection)(name="documents")
 
-        query_embedding = embeddings.embed_query(topic)
-        results = collection.query(
-            query_embeddings=[query_embedding], n_results=3, include=["documents"]
-        )
+        # Check if collection.query is asynchronous
+        if asyncio.iscoroutinefunction(collection.query):
+            results = await collection.query(
+                query_embeddings=[embeddings], n_results=3, include=["documents"]
+            )
+        else:
+            results = await sync_to_async(collection.query)(
+                query_embeddings=[embeddings], n_results=3, include=["documents"]
+            )
 
         context = " ".join(results["documents"])
-
-        if not all([topic, assessment_type, question_count]):
-            logger.error("Missing required fields in the request data")
-            return Response(
-                {"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST
-            )
 
         # Create the prompt template
         if assessment_type == "mcq":
@@ -235,7 +266,7 @@ class GenerateAssessmentView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        generated_text = make_api_request(prompt)
+        generated_text = await make_api_request(prompt)
         print(f"generated_text {generated_text}")
         if generated_text is not None:
             questions = parse_generated_text(generated_text, assessment_type)
@@ -252,7 +283,7 @@ class GenerateAssessmentView(APIView):
 
 
 class ScoreShortAnswersView(APIView):
-    def post(self, request):
+    async def post(self, request):
         answers = request.data.get("answers")
         topic = request.data.get("topic")
 
@@ -265,15 +296,8 @@ class ScoreShortAnswersView(APIView):
                 {"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST
             )
 
-        results = []
-
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_answer = {
-                executor.submit(process_answer, answer, topic): answer
-                for answer in answers
-            }
-            for future in as_completed(future_to_answer):
-                results.append(future.result())
+        tasks = [process_answer(answer, topic) for answer in answers]
+        results = await asyncio.gather(*tasks)
 
         total_score = sum(result["score"] for result in results)
         return Response(
@@ -282,7 +306,7 @@ class ScoreShortAnswersView(APIView):
 
 
 class ScoreLongAnswersView(APIView):
-    def post(self, request):
+    async def post(self, request):
         answers = request.data.get("answers")
         topic = request.data.get("topic")
 
@@ -295,15 +319,8 @@ class ScoreLongAnswersView(APIView):
                 {"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST
             )
 
-        results = []
-
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_answer = {
-                executor.submit(process_answer, answer, topic): answer
-                for answer in answers
-            }
-            for future in as_completed(future_to_answer):
-                results.append(future.result())
+        tasks = [process_answer(answer, topic) for answer in answers]
+        results = await asyncio.gather(*tasks)
 
         total_score = sum(result["score"] for result in results)
         return Response(
@@ -312,7 +329,7 @@ class ScoreLongAnswersView(APIView):
 
 
 class ScoreFillInTheBlanksView(APIView):
-    def post(self, request):
+    async def post(self, request):
         answers = request.data.get("answers")
         topic = request.data.get("topic")
 
@@ -327,13 +344,19 @@ class ScoreFillInTheBlanksView(APIView):
 
         results = []
 
-        def process_fill_in_the_blank_answer(answer, topic):
+        async def process_fill_in_the_blank_answer(answer, topic):
             question_text = answer.get("text")
             user_answers = answer.get("user_answer", [])
             correct_answers = answer.get("correct_answer", "").split(", ")
 
             # Retrieve relevant documents
-            embeddings = GooglePalmEmbeddings()
+            embeddings = await generate_gemini_embeddings(topic, "Retrieval")
+            if not embeddings:
+                return {
+                    "score": 0,
+                    "is_correct": [False] * len(correct_answers),
+                    "verified_by_llm": False,
+                }
             client = chromadb.Client(
                 settings=chromadb.config.Settings(
                     chroma_db_impl="duckdb+parquet",
@@ -341,12 +364,17 @@ class ScoreFillInTheBlanksView(APIView):
                     anonymized_telemetry=False,
                 )
             )
-            collection = client.get_collection(name="documents")
-
-            query_embedding = embeddings.embed_query(topic)
-            results = collection.query(
-                query_embeddings=[query_embedding], n_results=5, include=["documents"]
-            )
+            collection = await sync_to_async(client.get_collection)(name="documents")
+            
+            # Check if collection.query is asynchronous
+            if asyncio.iscoroutinefunction(collection.query):
+                results = await collection.query(
+                    query_embeddings=[embeddings], n_results=5, include=["documents"]
+                )
+            else:
+                results = await sync_to_async(collection.query)(
+                    query_embeddings=[embeddings], n_results=5, include=["documents"]
+                )
 
             context = " ".join(results["documents"])
 
@@ -373,7 +401,7 @@ class ScoreFillInTheBlanksView(APIView):
                     f"Provide a probability score between 0 and 1 representing how relevant the user's answer is to the correct answer. Give only the probability score number."
                 )
 
-                score_text = make_api_request(prompt)
+                score_text = await make_api_request(prompt)
                 print(f"score_text {score_text}")
                 if score_text is not None:
                     try:
@@ -396,13 +424,8 @@ class ScoreFillInTheBlanksView(APIView):
                 "verified_by_llm": all(is_correct_list),
             }
 
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_answer = {
-                executor.submit(process_fill_in_the_blank_answer, answer, topic): answer
-                for answer in answers
-            }
-            for future in as_completed(future_to_answer):
-                results.append(future.result())
+        tasks = [process_fill_in_the_blank_answer(answer, topic) for answer in answers]
+        results = await asyncio.gather(*tasks)
 
         total_score = sum(result["score"] for result in results)
         print(f"total_score {total_score}")
