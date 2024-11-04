@@ -560,10 +560,12 @@ class FileUploadView(APIView):
             topic = request.data.get("topic")
 
             if not files:
-                return Response(
-                    {"error": "No files provided"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                logger.info("No files uploaded, proceeding with topic only")
+                return Response({
+                    "message": "Proceeding with topic only",
+                    "topic": topic,
+                    "processed_files": []
+                }, status=status.HTTP_200_OK)
 
             # First, verify Pinecone index dimensions
             index_info = pc.describe_index(INDEX_NAME)
